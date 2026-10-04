@@ -3,7 +3,7 @@
 A self-hosted email marketing backend: Flask, PostgreSQL, SQLAlchemy and APScheduler, with sending over each business's own SMTP server.
 It is built from the specs in [`docs/`](docs/).
 
-It covers multi-tenant accounts (JWT or API key), subscribers (CRUD, CSV/JSON import, CSV export), templates (sandboxed Jinja2 with a starter library),
+It comes with a web dashboard at `/app/` and a REST API. It covers multi-tenant accounts (JWT or API key), subscribers (CRUD, CSV/JSON import, CSV export), templates (sandboxed Jinja2 with a starter library),
 segments (JSON filter rules compiled to SQL), campaigns (send now, schedule, pause/resume, A/B subject lines),
 open/click tracking, one-click unsubscribe, bounce handling with retries, automation workflows, analytics and background jobs.
 
@@ -15,6 +15,25 @@ pip install -r requirements.txt
 cp .env.example .env              # set DATABASE_URL, SECRET_KEY, JWT_SECRET_KEY, TRACKING_DOMAIN
 python app.py                     # dev server on :5000, scheduler runs in-process
 ```
+
+Open <http://localhost:5000/>, create an account, and enter your SMTP details. You can also do that later under **Settings**, where **Test connection** checks them.
+
+## Web dashboard
+
+The dashboard is a single page served by the same Flask app, from `app/static/dashboard/`. It's plain HTML, CSS and JavaScript modules, with no build step and no external libraries.
+
+| Page | What you can do |
+|---|---|
+| **Overview** | Stat tiles, daily sent/opens/clicks chart, subscriber growth, opens by hour, recent campaigns |
+| **Subscribers** | Search and filter by status, tag or segment; add and edit (tags, custom fields); per-subscriber activity; CSV import and export |
+| **Segments** | Visual rule builder with a live match count and sample; JSON mode for nested groups |
+| **Templates** | HTML editor with live preview (HTML and plain text), variable snippets, starter library |
+| **Campaigns** | Create, A/B subjects, send a test, send now, schedule, pause/resume; live stats, top links, A/B results |
+| **Automations** | Workflow builder (send, wait, if/else, tags, fields, unsubscribe) with branching; per-subscriber run history |
+| **Email logs** | Every queued or sent email, filterable by status, campaign and recipient |
+| **Settings** | Sender identity, SMTP (with connection test), API key copy/rotate, password, sign out everywhere |
+
+It follows the system light/dark theme and works on phones. Charts have hover tooltips and a "Show as table" view.
 
 Run the tests (in-memory SQLite by default; set `TEST_DATABASE_URL` to use PostgreSQL):
 
@@ -62,6 +81,8 @@ Every endpoint listed in `docs/QUICK_REFERENCE.md` is implemented. These were ad
 | `GET /api/automations/:id/instances` | Per-subscriber workflow progress |
 | `GET/POST /u/:email_log_id?sig=` | Unsubscribe confirmation page / RFC 8058 one-click POST |
 | `GET /health` | Liveness check |
+| `POST /api/templates/render` | Render unsaved template content (editor preview) |
+| `GET /api/subscribers/fields` | Custom field keys and tags in use (segment builder) |
 
 List endpoints take `?page=&per_page=` (max 100). Errors come back as `{"error": "...", "details": ...}` with a matching HTTP status.
 
@@ -121,7 +142,7 @@ A hard bounce marks the subscriber `bounced` straight away. Soft bounces do the 
 
 ## Known limitations / next steps
 
-- **Plaintext SMTP passwords:** these are stored as plain text, as in the spec. Encrypting them at rest (e.g. Fernet with a key from the environment) is the first hardening step.
+- **Plaintext SMTP passwords:** these are stored as plain text, as in the spec. That's fine for a personal install, but encrypt them at rest before hosting it for others.
 - **The mailto unsubscribe address is not processed:** `List-Unsubscribe` advertises both an HTTPS one-click URL and `mailto:unsubscribe@<sender_domain>`. Nothing reads that mailbox yet, so connect it to an inbound handler or drop the mailto part.
 - **Per-process API rate limit:** the auth rate limiter lives in memory in each process. Use Redis (e.g. Flask-Limiter) to enforce it across workers.
 - **No asynchronous bounces:** the platform only sees bounces that happen during the SMTP session. Bounce notifications that arrive later (via webhook or IMAP) are not handled.

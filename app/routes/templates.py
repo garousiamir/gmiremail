@@ -27,6 +27,13 @@ def list_templates():
     return jsonify(paginate(query, page, per_page, lambda t: t.to_dict(include_content=False)))
 
 
+@bp.post('/render')
+@require_auth
+def render_unsaved():
+    """Preview unsaved content: {subject_line, html_content, text_content, preview_text, sample_data}."""
+    return jsonify(template_service.preview_content(request.business_id, get_json_body()))
+
+
 @bp.get('/library')
 @require_auth
 def template_library():

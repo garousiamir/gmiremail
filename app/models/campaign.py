@@ -43,6 +43,8 @@ class Campaign(db.Model):
             'business_id': self.business_id,
             'template_id': self.template_id,
             'segment_id': self.segment_id,
+            'template_name': self.template.name if self.template else None,
+            'segment_name': self.segment.name if self.segment else None,
             'name': self.name,
             'status': self.status,
             'subject_line': self.subject_line,

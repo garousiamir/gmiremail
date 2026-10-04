@@ -223,6 +223,24 @@ def preview_template(business_id, template_id, sample_data=None):
     return rendered
 
 
+def preview_content(business_id, data):
+    """Render unsaved template content (live editor preview)."""
+    from app.models import Business
+    business = db.session.get(Business, business_id)
+    template = EmailTemplate(
+        subject_line=data.get('subject_line') or '', html_content=data.get('html_content') or '',
+        text_content=data.get('text_content') or None, preview_text=data.get('preview_text') or '',
+    )
+    variables = dict(DEFAULT_SAMPLE_DATA)
+    variables['business_name'] = business.name
+    variables['physical_address'] = business.physical_address or ''
+    variables.update(data.get('sample_data') or {})
+    rendered = render_template(template, variables)
+    rendered['template_variables'] = extract_variables(template.subject_line, template.html_content,
+                                                       template.text_content)
+    return rendered
+
+
 def create_from_library(business_id, key, name=None):
     entry = TEMPLATE_LIBRARY.get(key)
     if entry is None:

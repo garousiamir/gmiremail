@@ -32,6 +32,7 @@ class AutomationInstance(db.Model):
             'id': self.id,
             'automation_id': self.automation_id,
             'subscriber_id': self.subscriber_id,
+            'subscriber_email': self.subscriber.email if self.subscriber else None,
             'current_step': self.current_step,
             'status': self.status,
             'next_run_at': isoformat(self.next_run_at),

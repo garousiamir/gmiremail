@@ -161,6 +161,18 @@ def bulk_import(business_id, subscribers_data, update_existing=False, trigger_au
     }
 
 
+def known_fields(business_id, sample=5000):
+    """Custom field keys and tags in use (for building segment rules)."""
+    custom, tags = set(), set()
+    rows = (db.session.query(Subscriber.custom_fields, Subscriber.tags)
+            .filter(Subscriber.business_id == business_id)
+            .order_by(Subscriber.created_at.desc()).limit(sample))
+    for fields, subscriber_tags in rows:
+        custom.update((fields or {}).keys())
+        tags.update(subscriber_tags or [])
+    return {'custom_fields': sorted(custom), 'tags': sorted(tags)}
+
+
 def get_subscribers(business_id, filters=None):
     filters = filters or {}
     query = Subscriber.query.filter(Subscriber.business_id == business_id)

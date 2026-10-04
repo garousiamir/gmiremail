@@ -60,6 +60,12 @@ def list_subscribers():
     return jsonify(paginate(query, page, per_page))
 
 
+@bp.get('/fields')
+@require_auth
+def known_fields():
+    return jsonify(subscriber_service.known_fields(request.business_id))
+
+
 @bp.get('/<subscriber_id>')
 @require_auth
 def get_subscriber(subscriber_id):
