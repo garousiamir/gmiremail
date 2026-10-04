@@ -42,7 +42,18 @@ pytest -q
 TEST_DATABASE_URL=postgresql://user:pw@localhost/emk_test pytest -q
 ```
 
-### Production
+### Production: one server, with its own mail server
+
+On a fresh Ubuntu or Debian VPS, one command installs everything: PostgreSQL, the web app and worker as systemd services, nginx with a Let's Encrypt certificate for your hostname, Postfix with DKIM so mail is sent directly from this server, and daily backups.
+
+```bash
+sudo git clone https://github.com/garousiamir/gmiremail /opt/gmiremail && cd /opt/gmiremail
+sudo deploy/install.sh --domain mail.example.com --email you@example.com --mail-domain example.com
+```
+
+See **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** for the DNS records (SPF, DKIM, DMARC, PTR) needed for inbox delivery, IP warm-up, updates, backups and troubleshooting.
+
+### Production: by hand
 
 ```bash
 export FLASK_ENV=production AUTO_CREATE_TABLES=False ENABLE_SCHEDULER=False
@@ -56,6 +67,7 @@ The scheduler must run in a single process. Otherwise every gunicorn worker woul
 Concurrent queue workers are still safe on PostgreSQL, because emails are claimed with `FOR UPDATE SKIP LOCKED`.
 
 Set `TRACKING_DOMAIN` to the public HTTPS URL of the app. Tracking pixels, click links and unsubscribe links are built from it.
+Behind a reverse proxy, set `TRUSTED_PROXIES=1` so the app sees real client IPs and `https`.
 
 ## Authentication
 

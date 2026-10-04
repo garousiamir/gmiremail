@@ -1,4 +1,5 @@
 """SMTP connection management (per-business connections with reuse)."""
+import ipaddress
 import logging
 import smtplib
 import socket
@@ -14,20 +15,34 @@ class SMTPConnectionError(Exception):
     """Could not connect / authenticate to the business's SMTP server."""
 
 
+def is_loopback(host):
+    try:
+        return ipaddress.ip_address(socket.gethostbyname(host)).is_loopback
+    except (OSError, ValueError):
+        return False
+
+
 def open_connection(host, port, username=None, password=None, use_tls=True, timeout=None):
     timeout = timeout or current_app.config.get('SMTP_TIMEOUT', 30)
     context = ssl.create_default_context()
+    # A relay on this same machine (e.g. Postfix on 127.0.0.1) needs neither
+    # TLS nor a login: the traffic never leaves the server.
+    local = is_loopback(host)
     try:
         if int(port) == 465:
             conn = smtplib.SMTP_SSL(host, port, timeout=timeout, context=context)
         else:
             conn = smtplib.SMTP(host, port, timeout=timeout)
             conn.ehlo()
-            if use_tls:
+            if use_tls and not local:
                 conn.starttls(context=context)
                 conn.ehlo()
         if username:
-            conn.login(username, password or '')
+            if conn.has_extn('auth'):
+                conn.login(username, password or '')
+            elif not local:
+                raise smtplib.SMTPNotSupportedError(
+                    'server does not offer AUTH (check the port and TLS setting)')
         return conn
     except (smtplib.SMTPException, OSError, socket.timeout) as exc:
         raise SMTPConnectionError(f'SMTP connection to {host}:{port} failed: {exc}') from exc

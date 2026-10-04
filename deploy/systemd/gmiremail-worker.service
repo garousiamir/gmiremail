@@ -1,0 +1,20 @@
+[Unit]
+Description=gmiremail background worker (email queue, automations, analytics)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+User=@APP_USER@
+Group=@APP_USER@
+WorkingDirectory=@APP_DIR@
+EnvironmentFile=@ENV_FILE@
+ExecStart=@APP_DIR@/venv/bin/python worker.py
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

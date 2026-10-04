@@ -1,0 +1,21 @@
+[Unit]
+Description=gmiremail web app (gunicorn)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+User=@APP_USER@
+Group=@APP_USER@
+WorkingDirectory=@APP_DIR@
+EnvironmentFile=@ENV_FILE@
+ExecStart=@APP_DIR@/venv/bin/gunicorn --workers @WORKERS@ --bind 127.0.0.1:@PORT@ --access-logfile - --forwarded-allow-ips 127.0.0.1 wsgi:app
+Restart=always
+RestartSec=5
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

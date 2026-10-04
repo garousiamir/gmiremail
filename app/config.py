@@ -49,6 +49,9 @@ class Config:
     ENABLE_TRACKING = _bool('ENABLE_TRACKING', True)
     TRACKING_DOMAIN = os.getenv('TRACKING_DOMAIN', 'http://localhost:5000').rstrip('/')
 
+    # Reverse proxies in front of the app (1 behind nginx, 0 when exposed directly)
+    TRUSTED_PROXIES = int(os.getenv('TRUSTED_PROXIES', 0))
+
     # API rate limiting for auth endpoints (per IP, per minute)
     AUTH_RATE_LIMIT_PER_MINUTE = int(os.getenv('AUTH_RATE_LIMIT_PER_MINUTE', 20))
 

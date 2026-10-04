@@ -111,7 +111,6 @@ def _csv_safe(value):
 
 
 def client_ip():
-    forwarded = request.headers.get('X-Forwarded-For', '')
-    if forwarded:
-        return forwarded.split(',')[0].strip()
+    # Behind a reverse proxy, TRUSTED_PROXIES makes ProxyFix set remote_addr
+    # from X-Forwarded-For; the raw header is never trusted (it is spoofable).
     return request.remote_addr or 'unknown'
