@@ -31,7 +31,7 @@ The dashboard is a single page served by the same Flask app, from `app/static/da
 | **Campaigns** | Create, A/B subjects, send a test, send now, schedule, pause/resume; live stats, top links, A/B results |
 | **Automations** | Workflow builder (send, wait, if/else, tags, fields, unsubscribe) with branching; per-subscriber run history |
 | **Email logs** | Every queued or sent email, filterable by status, campaign and recipient |
-| **Settings** | Sender identity, SMTP (with connection test), API key copy/rotate, password, sign out everywhere |
+| **Settings** | Sender identity, SMTP (with connection test), API key copy/rotate, password, sign out everywhere, **download a full backup** (server owner) |
 
 It follows the system light/dark theme and works on phones. Charts have hover tooltips and a "Show as table" view.
 
@@ -50,6 +50,8 @@ On a fresh Ubuntu or Debian VPS, one command installs everything: PostgreSQL, th
 sudo git clone https://github.com/garousiamir/gmiremail /opt/gmiremail && cd /opt/gmiremail
 sudo deploy/install.sh --domain mail.example.com --email you@example.com --mail-domain example.com
 ```
+
+To move servers, download a backup in **Settings → Backup** and pass it to `install.sh --restore <file>` on the new server.
 
 See **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** for the DNS records (SPF, DKIM, DMARC, PTR) needed for inbox delivery, IP warm-up, updates, backups and troubleshooting.
 

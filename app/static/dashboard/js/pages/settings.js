@@ -1,5 +1,5 @@
 import { api, session } from '../api.js';
-import { busy, clear, copyText, field, formData, h, icon, navigate, pageHead, toast } from '../ui.js';
+import { busy, clear, copyText, field, fmtNum, formData, h, icon, navigate, pageHead, toast } from '../ui.js';
 
 export async function render(main) {
   const business = await api.get('/api/businesses/me');
@@ -57,11 +57,41 @@ export async function render(main) {
       card('API key', 'Use as an X-API-Key header to call the API from your own scripts',
         h('div', { class: 'copy-field' }, apiKey,
           h('button', { onclick: () => copyText(apiKey.value) }, icon('copy'), 'Copy'), rotateBtn)),
+      business.is_admin ? backupCard() : null,
       card('Password', 'Changing it signs you out everywhere', password, [passwordBtn]),
       card('Sessions', null, h('p', { class: 'secondary' }, 'Sign out of every browser and invalidate all tokens.'), [
         h('button', { class: 'danger', onclick: async () => {
           try { await api.post('/api/auth/logout'); } finally { session.clear(); navigate('login'); }
         } }, icon('logout'), 'Sign out everywhere')])));
+
+  function backupCard() {
+    const counts = h('div', { class: 'small muted' }, 'Counting…');
+    api.get('/api/admin/backup').then(({ counts: c }) => {
+      counts.textContent = `Includes ${fmtNum(c.businesses)} business${c.businesses === 1 ? '' : 'es'}, `
+        + `${fmtNum(c.subscribers)} subscribers, ${fmtNum(c.campaigns)} campaigns, ${fmtNum(c.automations)} automations `
+        + `and ${fmtNum(c.email_logs)} email records with their analytics.`;
+    }).catch(() => { counts.textContent = ''; });
+    const pw = h('input', { type: 'password', autocomplete: 'current-password', placeholder: 'Your password',
+      style: { fontFamily: 'inherit', fontSize: '14px' },
+      'aria-label': 'Password', onkeydown: (e) => { if (e.key === 'Enter') download(); } });
+    const btn = h('button', { class: 'primary', onclick: download }, icon('download'), 'Download backup');
+    async function download() {
+      if (!pw.value) { toast('Enter your password to download a backup', 'error'); pw.focus(); return; }
+      await busy(btn, async () => {
+        await api.download('/api/admin/backup', { password: pw.value },
+          `gmiremail-backup-${new Date().toISOString().slice(0, 10)}.tar.gz`);
+        pw.value = '';
+        toast('Backup downloaded. Keep it somewhere safe.');
+      });
+    }
+    return card('Backup', 'Everything on this server in one file, to keep or to move to a new server',
+      h('div', { class: 'stack', style: { gap: '10px' } },
+        counts,
+        h('p', { class: 'secondary', style: { margin: 0 } },
+          'The file contains all data and the secret keys (so links in emails you already sent keep working). ',
+          'Store it safely. To restore on a new server: ', h('code', {}, 'sudo deploy/restore.sh <file>'), '.'),
+        h('div', { class: 'copy-field' }, pw, btn)));
+  }
 
   async function saveProfile() {
     if (!profile.reportValidity()) return;

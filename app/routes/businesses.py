@@ -10,7 +10,8 @@ bp = Blueprint('businesses', __name__, url_prefix='/api/businesses')
 @bp.get('/me')
 @require_auth
 def get_me():
-    return jsonify(g.business.to_dict())
+    from app.services.backup_service import is_admin
+    return jsonify({**g.business.to_dict(), 'is_admin': is_admin(g.business)})
 
 
 @bp.put('/me')

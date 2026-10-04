@@ -129,8 +129,9 @@ The script prints the DKIM record to publish. Add SPF and DMARC records for that
 | Update to the latest code | `cd /opt/gmiremail && sudo git pull && sudo deploy/update.sh` |
 | Settings and secrets | `/etc/gmiremail/gmiremail.env` (restart after changes) |
 | Postfix queue / delivery log | `mailq` · `sudo journalctl -u postfix -f` |
-| Backups | `/var/backups/gmiremail/gmiremail-YYYY-MM-DD.dump` (daily, kept 14 days) |
-| Restore a backup | `sudo systemctl stop gmiremail-web gmiremail-worker && sudo runuser -u postgres -- pg_restore --clean -d gmiremail /var/backups/gmiremail/<file>.dump && sudo systemctl start gmiremail-web gmiremail-worker` |
+| Download a backup | Dashboard → **Settings → Backup** (server owner only) |
+| Automatic backups | `/var/backups/gmiremail/gmiremail-backup-YYYY-MM-DD.tar.gz` (daily, kept 14 days, same format) |
+| Restore a backup | `sudo deploy/restore.sh <file>.tar.gz` (see below) |
 | Certificate renewal | Automatic (certbot timer). Check with `sudo certbot renew --dry-run` |
 
 **Firewall:** only SSH and web traffic need to be open, so port 25 does *not* need to accept inbound connections:
@@ -139,7 +140,39 @@ The script prints the DKIM record to publish. Add SPF and DMARC records for that
 sudo ufw allow OpenSSH && sudo ufw allow 'Nginx Full' && sudo ufw enable
 ```
 
-Copy the backups off the server now and then, e.g. with `rsync` to another machine.
+## Backups and moving to a new server
+
+### Downloading a backup
+
+In the dashboard, go to **Settings → Backup**, enter your password and click **Download backup**. You get a single `.tar.gz` file containing:
+
+- **The whole database:** every business, subscriber, template, segment, campaign and automation, plus all email logs, opens, clicks and other analytics history.
+- **The secret keys** (`SECRET_KEY`, `JWT_SECRET_KEY`): unsubscribe and click links in emails you already sent keep working after a move, and everyone keeps their password.
+- **The DKIM keys:** your DKIM DNS records stay valid on the new server.
+
+The file contains everyone's data and the keys, so **store it somewhere safe**. Only the server owner sees the Backup card. The owner is the first account created on the server, or the addresses in `ADMIN_EMAILS` in `/etc/gmiremail/gmiremail.env` (set with `install.sh --admin-email`). Create your own account right after installing, so that nobody else becomes the owner.
+
+A copy in the same format is also saved automatically every night in `/var/backups/gmiremail/`, and 14 are kept. Those copies live on the server itself, so download one from time to time.
+
+### Moving to a new server
+
+1. On the old server, stop sending, then download the backup. The dashboard stays available for the download:
+   ```bash
+   sudo systemctl stop gmiremail-worker
+   ```
+2. On the new server, install with the **same hostname** and the backup file. Upload the file first, e.g. `scp gmiremail-backup-*.tar.gz root@new-server:/root/`.
+   ```bash
+   sudo git clone https://github.com/garousiamir/gmiremail /opt/gmiremail && cd /opt/gmiremail
+   sudo deploy/install.sh --domain mail.example.com --email you@example.com \
+        --mail-domain example.com --restore /root/gmiremail-backup-2026-10-04-1200.tar.gz
+   ```
+   On a server where `install.sh` has already run, use `sudo deploy/restore.sh <file>` instead. It asks for confirmation because it **replaces** all data on that server.
+3. Point the DNS `A` record of the hostname at the new server's IP. The certificate needs this, so if it failed during install, run `install.sh` again afterwards.
+4. Update SPF (`ip4:<new IP>`) and reverse DNS (PTR) for the new IP. The DKIM record doesn't change.
+5. Warm up the new IP (see [Warming up](#warming-up-a-new-server)). Reputation belongs to the IP, not to your data.
+6. When the new server is working, switch off the old one completely: `sudo systemctl disable --now gmiremail-web gmiremail-worker`.
+
+Everything comes back as it was: accounts and passwords, subscribers, campaign and automation history, analytics, and queued emails. Keep the same hostname. Links in emails that were already sent point to it.
 
 ## Troubleshooting
 

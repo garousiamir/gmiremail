@@ -49,6 +49,11 @@ class Config:
     ENABLE_TRACKING = _bool('ENABLE_TRACKING', True)
     TRACKING_DOMAIN = os.getenv('TRACKING_DOMAIN', 'http://localhost:5000').rstrip('/')
 
+    # Server owner(s) allowed to download full backups. Empty = the first account created.
+    ADMIN_EMAILS = [e.strip().lower() for e in os.getenv('ADMIN_EMAILS', '').split(',') if e.strip()]
+    # Readable copy of the DKIM keys, included in backups (set by deploy/install.sh)
+    DKIM_BACKUP_DIR = os.getenv('DKIM_BACKUP_DIR', '')
+
     # Reverse proxies in front of the app (1 behind nginx, 0 when exposed directly)
     TRUSTED_PROXIES = int(os.getenv('TRUSTED_PROXIES', 0))
 

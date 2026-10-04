@@ -47,7 +47,7 @@ def create_app(config_name=None, start_scheduler=None, config_overrides=None):
 
     # Register blueprints
     from app.routes import (auth, businesses, subscribers, campaigns, templates,
-                            automations, segments, analytics, tracking, dashboard)
+                            automations, segments, analytics, tracking, dashboard, admin)
 
     app.register_blueprint(auth.bp)
     app.register_blueprint(businesses.bp)
@@ -59,6 +59,10 @@ def create_app(config_name=None, start_scheduler=None, config_overrides=None):
     app.register_blueprint(segments.bp)
     app.register_blueprint(analytics.bp)
     app.register_blueprint(dashboard.bp)
+    app.register_blueprint(admin.bp)
+
+    from app.cli import register_cli
+    register_cli(app)
 
     _register_error_handlers(app)
 

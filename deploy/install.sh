@@ -8,7 +8,8 @@
 #
 # Usage (from the repository checkout, as root):
 #   sudo deploy/install.sh --domain mail.example.com --email you@example.com \
-#        [--mail-domain example.com] [--no-postfix] [--skip-certbot]
+#        [--mail-domain example.com] [--admin-email you@example.com]
+#        [--restore gmiremail-backup.tar.gz] [--no-postfix] [--skip-certbot]
 #
 # Safe to re-run: existing secrets, database, DKIM keys and certificates are kept.
 set -euo pipefail
@@ -16,6 +17,8 @@ set -euo pipefail
 DOMAIN=""
 LE_EMAIL=""
 MAIL_DOMAIN=""
+ADMIN_EMAIL=""
+RESTORE_FILE=""
 WITH_POSTFIX=1
 WITH_CERTBOT=1
 APP_USER="gmiremail"
@@ -30,6 +33,8 @@ while [[ $# -gt 0 ]]; do
     --domain) DOMAIN="$2"; shift 2 ;;
     --email) LE_EMAIL="$2"; shift 2 ;;
     --mail-domain) MAIL_DOMAIN="$2"; shift 2 ;;
+    --admin-email) ADMIN_EMAIL="$2"; shift 2 ;;
+    --restore) RESTORE_FILE="$(realpath "$2")"; shift 2 ;;
     --no-postfix) WITH_POSTFIX=0; shift ;;
     --skip-certbot) WITH_CERTBOT=0; shift ;;
     --port) PORT="$2"; shift 2 ;;
@@ -51,6 +56,7 @@ if [[ $WITH_CERTBOT -eq 1 && -z "$LE_EMAIL" ]]; then
   die "--email is required for Let's Encrypt (or pass --skip-certbot)."
 fi
 MAIL_DOMAIN="${MAIL_DOMAIN:-$DOMAIN}"
+[[ -z "$RESTORE_FILE" || -f "$RESTORE_FILE" ]] || die "Backup file not found: $RESTORE_FILE"
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEPLOY_DIR="$APP_DIR/deploy"
@@ -138,10 +144,18 @@ MAX_RETRY_ATTEMPTS=3
 MAX_SOFT_BOUNCES=3
 EMAIL_LOG_RETENTION_DAYS=365
 AUTH_RATE_LIMIT_PER_MINUTE=20
+
+# Who may download full backups (Settings -> Backup). Empty = the first account created.
+ADMIN_EMAILS=$ADMIN_EMAIL
+# Readable copy of the DKIM keys so they are included in backups
+DKIM_BACKUP_DIR=$ENV_DIR/dkim
 ENV
   umask 022
 else
   log "Keeping existing $ENV_FILE"
+  grep -q '^DKIM_BACKUP_DIR=' "$ENV_FILE" || echo "DKIM_BACKUP_DIR=$ENV_DIR/dkim" >> "$ENV_FILE"
+  grep -q '^ADMIN_EMAILS=' "$ENV_FILE" || echo "ADMIN_EMAILS=$ADMIN_EMAIL" >> "$ENV_FILE"
+  [[ -n "$ADMIN_EMAIL" ]] && sed -i "s|^ADMIN_EMAILS=.*|ADMIN_EMAILS=$ADMIN_EMAIL|" "$ENV_FILE"
   grep -q "^TRACKING_DOMAIN=https://$DOMAIN\$" "$ENV_FILE" || \
     warn "TRACKING_DOMAIN in $ENV_FILE is not https://$DOMAIN; edit it if the hostname changed."
 fi
@@ -251,17 +265,24 @@ CONF
 fi
 
 # --------------------------------------------------------------- backups
-log "Installing daily database backups (/var/backups/gmiremail, kept 14 days)"
+log "Installing daily full backups (/var/backups/gmiremail, kept 14 days)"
 install -d -m 700 /var/backups/gmiremail
-cat > /etc/cron.daily/gmiremail-backup <<'CRON'
+cat > /etc/cron.daily/gmiremail-backup <<CRON
 #!/bin/sh
-# Daily PostgreSQL dump of the gmiremail database (installed by deploy/install.sh)
+# Daily full backup, same format as Settings -> Backup (installed by deploy/install.sh)
 set -e
 umask 077
-runuser -u postgres -- pg_dump -Fc gmiremail > /var/backups/gmiremail/gmiremail-$(date +%F).dump
-find /var/backups/gmiremail -name 'gmiremail-*.dump' -mtime +14 -delete
+runuser -u $APP_USER -- sh -c "set -a; . '$ENV_FILE'; set +a; cd '$APP_DIR' && venv/bin/flask --app wsgi backup create -o -" \\
+  > /var/backups/gmiremail/gmiremail-backup-\$(date +%F).tar.gz
+find /var/backups/gmiremail -name 'gmiremail-*' -mtime +14 -delete
 CRON
 chmod 755 /etc/cron.daily/gmiremail-backup
+
+# --------------------------------------------------------------- restore
+if [[ -n "$RESTORE_FILE" ]]; then
+  log "Restoring backup $RESTORE_FILE"
+  "$DEPLOY_DIR/restore.sh" "$RESTORE_FILE" --yes
+fi
 
 # --------------------------------------------------------------- summary
 sleep 2
