@@ -98,13 +98,13 @@ export async function renderDetail(main, id) {
   async function load() {
     const a = await api.get(`/api/campaigns/${id}/analytics`);
     const c = a.campaign;
-    clear(main, pageHead(c.name, null, actionsFor(c), h('a', { href: '#/campaigns' }, '← Campaigns')), body);
+    clear(main, pageHead(c.name, null, actionsFor(c, a), h('a', { href: '#/campaigns' }, '← Campaigns')), body);
     draw(a);
     clearInterval(timer);
     if (['sending', 'scheduled'].includes(c.status)) timer = setInterval(() => load().catch(() => {}), 10000);
   }
 
-  function actionsFor(c) {
+  function actionsFor(c, a) {
     const act = (label, iconName, fn, cls = '') => {
       const b = h('button', { class: cls, onclick: () => busy(b, fn) }, iconName ? icon(iconName) : null, label);
       return b;
@@ -125,6 +125,21 @@ export async function renderDetail(main, id) {
     if (c.status === 'sending') out.push(act('Pause', 'pause', async () => { await api.post(`/api/campaigns/${c.id}/pause`); toast('Campaign paused'); await load(); }));
     if (c.status === 'scheduled') out.unshift(act('Unschedule', null, async () => { await api.put(`/api/campaigns/${c.id}`, { scheduled_time: null }); toast('Back to draft'); await load(); }));
     if (c.status === 'paused') out.push(act('Resume', 'play', async () => { await api.post(`/api/campaigns/${c.id}/resume`); toast('Campaign resumed'); await load(); }, 'primary'));
+    if (a.failed > 0 && !['draft', 'scheduled'].includes(c.status)) {
+      out.push(act(`Retry failed (${fmtNum(a.failed)})`, 'refresh', async () => {
+        const r = await api.post(`/api/campaigns/${c.id}/retry-failed`);
+        toast(`${fmtNum(r.requeued)} email${r.requeued === 1 ? '' : 's'} queued again`);
+        await load();
+      }));
+    }
+    if (['sent', 'paused'].includes(c.status)) {
+      out.push(act('Reset & resend', null, () => resetDialog(c, a, load)));
+    }
+    out.push(act('Duplicate', 'copy', async () => {
+      const copy = await api.post(`/api/campaigns/${c.id}/duplicate`);
+      toast('Copied as a new draft');
+      navigate(`campaigns/${copy.id}`);
+    }));
     if (c.status !== 'sending') {
       out.unshift(act('Delete', 'trash', async () => {
         if (!await confirmDialog('Delete campaign?', 'Its email history and stats are deleted too.', { confirmLabel: 'Delete', danger: true })) return;
@@ -204,6 +219,32 @@ function fillHours(points) {
   const last = Math.max(...points.map((p) => p.hour_after_send), 1);
   const byHour = new Map(points.map((p) => [p.hour_after_send, p]));
   return Array.from({ length: last + 1 }, (_, hr) => byHour.get(hr) || { hour_after_send: hr, opens: 0, clicks: 0 });
+}
+
+function resetDialog(c, a, reload) {
+  const restore = h('input', { type: 'checkbox', checked: a.bounces > 0 });
+  const btn = h('button', { class: 'danger', onclick: () => busy(btn, async () => {
+    const r = await api.post(`/api/campaigns/${c.id}/reset`, { restore_bounced: restore.checked });
+    m.close();
+    toast(r.restored_subscribers
+      ? `Campaign reset to draft. ${fmtNum(r.restored_subscribers)} subscriber(s) re-activated.`
+      : 'Campaign reset to draft. You can send it again.');
+    reload();
+  }) }, 'Reset campaign');
+  const m = modal({
+    title: 'Reset & resend this campaign?',
+    body: h('div', { class: 'form' },
+      h('p', { class: 'secondary' }, 'Use this when emails show as sent but never arrived, for example because the SMTP '
+        + 'server was blocked or misconfigured. The campaign goes back to draft so you can send it again.'),
+      h('ul', { class: 'secondary', style: { margin: 0, paddingLeft: '18px' } },
+        h('li', {}, `Deletes this campaign's sending history and stats (${fmtNum(a.sent)} sent, ${fmtNum(a.unique_opens)} opens, ${fmtNum(a.unique_clicks)} clicks).`),
+        h('li', {}, 'People who unsubscribed stay unsubscribed and will not receive it again.'),
+        h('li', {}, 'Anyone who already received it will get it a second time.')),
+      a.bounces ? h('label', { class: 'check' }, restore,
+        `Re-activate the ${fmtNum(a.bounces)} subscriber(s) this campaign marked as bounced (choose this if the bounces were caused by your SMTP setup)`) : null,
+      h('p', { class: 'small muted', style: { margin: 0 } }, 'Prefer to keep the stats? Use "Duplicate" instead, then send the copy.')),
+    actions: [h('button', { onclick: () => m.close() }, 'Cancel'), btn],
+  });
 }
 
 function scheduleDialog(c, reload) {

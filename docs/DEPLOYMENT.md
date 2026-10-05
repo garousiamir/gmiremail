@@ -180,6 +180,6 @@ Everything comes back as it was: accounts and passwords, subscribers, campaign a
 |---|---|
 | Certificate request failed | The DNS `A` record doesn't point to this server yet, or port 80 is blocked. Fix it and re-run `install.sh` |
 | Emails stay *queued* | Check `journalctl -u gmiremail-worker`. The daily or per-minute limit may be reached, or the campaign is paused |
-| Emails *sent* in the app but never arrive | Check `sudo journalctl -u postfix`. `Connection timed out` on port 25 means your provider blocks it. `550 … PTR` or `… SPF` means step 3 isn't finished |
+| Emails *sent* in the app but never arrive (after fixing the cause, open the campaign and use **Retry failed**, or **Reset & resend** if they show as sent) | Check `sudo journalctl -u postfix`. `Connection timed out` on port 25 means your provider blocks it. `550 … PTR` or `… SPF` means step 3 isn't finished |
 | Everything lands in spam | Finish SPF/DKIM/DMARC/PTR, warm up slowly, and send only to people who opted in |
 | Dashboard shows 502 | `sudo systemctl status gmiremail-web` and `journalctl -u gmiremail-web` |

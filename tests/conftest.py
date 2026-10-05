@@ -17,6 +17,8 @@ class FakeSMTP:
         recipient = message['To']
         if recipient.startswith('hard'):
             raise smtplib.SMTPRecipientsRefused({recipient: (550, b'No such user')})
+        if recipient.startswith('relay'):
+            raise smtplib.SMTPRecipientsRefused({recipient: (554, b'5.7.1 <x>: Relay access denied')})
         if recipient.startswith('soft'):
             raise smtplib.SMTPRecipientsRefused({recipient: (451, b'Try again later')})
         self.outbox.append(message)

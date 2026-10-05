@@ -1,6 +1,7 @@
 """SMTP connection management (per-business connections with reuse)."""
 import ipaddress
 import logging
+import re
 import smtplib
 import socket
 import ssl
@@ -91,21 +92,52 @@ def test_connection(business):
     return True, 'SMTP connection successful'
 
 
+ENHANCED_CODE_RE = re.compile(r'\b5\.(\d)\.\d{1,3}\b')
+# Permanent rejections that are about the SENDER or the setup, not the address
+POLICY_HINTS = ('relay', 'authenticat', 'auth required', 'not permitted', 'sender', 'spf', 'dkim',
+                'dmarc', 'blocked', 'blacklist', 'blocklist', 'spam', 'policy', 'reputation',
+                'rate limit', 'too many', 'rejected due to', 'not allowed', 'rcpthosts')
+
+
+def permanent_kind(text):
+    """Classify a 5xx rejection: 'hard' (the address is bad) or 'policy'
+    (relay/auth/spam/reputation problems: the subscriber is not at fault)."""
+    low = text.lower()
+    match = ENHANCED_CODE_RE.search(low)
+    if match:
+        # RFC 3463: 5.1.x = bad address, 5.2.x = mailbox problem, 5.7.x = security/policy
+        if match.group(1) in ('1', '2'):
+            return 'hard'
+        if match.group(1) == '7':
+            return 'policy'
+    return 'policy' if any(hint in low for hint in POLICY_HINTS) else 'hard'
+
+
 def classify_smtp_error(exc):
-    """Map an SMTP exception to 'hard' (permanent), 'soft' (retry) or 'connection'."""
+    """Map an SMTP exception to 'hard' (bad address), 'policy' (permanent
+    rejection that is not the address's fault), 'soft' (retry) or 'connection'."""
     if isinstance(exc, smtplib.SMTPRecipientsRefused):
-        codes = [code for code, _ in exc.recipients.values()]
-        code = codes[0] if codes else 550
-        return ('hard' if 500 <= code < 600 else 'soft'), f'Recipient refused: {exc.recipients}'
+        code, reason = next(iter(exc.recipients.values()), (550, b''))
+        reason = reason.decode(errors='replace') if isinstance(reason, bytes) else str(reason)
+        detail = f'Recipient refused: {code} {reason}'
+        if 500 <= code < 600:
+            return permanent_kind(detail), detail
+        return 'soft', detail
     if isinstance(exc, (smtplib.SMTPServerDisconnected, smtplib.SMTPConnectError,
-                        smtplib.SMTPAuthenticationError, SMTPConnectionError, OSError)):
+                        smtplib.SMTPAuthenticationError, SMTPConnectionError)):
         return 'connection', str(exc)
+    # Every smtplib exception is also an OSError, so read the SMTP status code
+    # before falling back to treating it as a network problem.
     code = getattr(exc, 'smtp_code', None)
-    if code is not None:
+    if isinstance(code, int):
         if isinstance(exc, smtplib.SMTPSenderRefused):
-            # Sender problems are our configuration, not the recipient's fault
-            return 'connection' if code >= 500 else 'soft', str(exc)
-        return ('hard' if 500 <= code < 600 else 'soft'), str(exc)
+            # The server refuses our sender: a setup problem, never the subscriber's fault
+            return ('policy' if code >= 500 else 'soft'), str(exc)
+        if 500 <= code < 600:
+            return permanent_kind(str(exc)), str(exc)
+        return 'soft', str(exc)
+    if isinstance(exc, OSError):
+        return 'connection', str(exc)
     return 'soft', str(exc)
 
 

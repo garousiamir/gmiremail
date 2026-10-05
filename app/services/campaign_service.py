@@ -217,6 +217,70 @@ def resume_campaign(business_id, campaign_id):
     return campaign
 
 
+def retry_failed(business_id, campaign_id):
+    """Put this campaign's failed emails back in the queue (e.g. after fixing SMTP)."""
+    campaign = get_campaign(business_id, campaign_id)
+    if campaign.status in ('draft', 'scheduled'):
+        raise ServiceError('This campaign has not been sent yet', 409)
+    requeued = EmailLog.query.filter(EmailLog.campaign_id == campaign.id, EmailLog.status == 'failed').update(
+        {'status': 'pending', 'attempts': 0, 'error_message': None, 'next_attempt_at': utcnow()},
+        synchronize_session=False)
+    if not requeued:
+        raise ServiceError('There are no failed emails to retry', 409)
+    if campaign.status == 'sent':
+        campaign.status = 'sending'
+        campaign.completed_at = None
+    db.session.commit()
+    return {'requeued': requeued, 'campaign': campaign.to_dict()}
+
+
+def reset_campaign(business_id, campaign_id, restore_bounced=False):
+    """Erase a campaign's sending history and stats and make it a draft again.
+
+    Use when emails were "sent" but never delivered (e.g. a blocked or broken
+    SMTP server). Unsubscribes are never undone. With restore_bounced, subscribers
+    this campaign marked as bounced are made active again.
+    """
+    campaign = get_campaign(business_id, campaign_id)
+    if campaign.status == 'sending':
+        raise ServiceError('Pause the campaign before resetting it', 409)
+    if campaign.status == 'draft' and not campaign.send_time:
+        raise ServiceError('This campaign has not been sent yet', 409)
+
+    restored = 0
+    if restore_bounced:
+        bounced = db.select(EmailLog.subscriber_id).where(
+            EmailLog.campaign_id == campaign.id, EmailLog.bounced_at.isnot(None))
+        restored = Subscriber.query.filter(
+            Subscriber.business_id == business_id, Subscriber.status == 'bounced',
+            Subscriber.id.in_(bounced),
+        ).update({'status': 'active', 'bounce_count': 0}, synchronize_session=False)
+
+    EmailEvent.query.filter_by(campaign_id=campaign.id).delete(synchronize_session=False)
+    EmailLog.query.filter_by(campaign_id=campaign.id).delete(synchronize_session=False)
+    campaign.status = 'draft'
+    campaign.scheduled_time = None
+    campaign.send_time = None
+    campaign.completed_at = None
+    campaign.total_recipients = campaign.total_sent = campaign.total_opens = 0
+    campaign.total_clicks = campaign.total_bounces = campaign.total_unsubscribes = 0
+    db.session.commit()
+    return {'campaign': campaign.to_dict(), 'restored_subscribers': restored}
+
+
+def duplicate_campaign(business_id, campaign_id):
+    """Copy a campaign (content, audience, A/B subjects) into a new draft."""
+    source = get_campaign(business_id, campaign_id)
+    copy = Campaign(
+        business_id=business_id, template_id=source.template_id, segment_id=source.segment_id,
+        name=f'{source.name} (copy)'[:255], subject_line=source.subject_line,
+        subject_variants=list(source.subject_variants or []), status='draft',
+    )
+    db.session.add(copy)
+    db.session.commit()
+    return copy
+
+
 def recalculate_campaign_totals(campaign):
     """Rebuild counters from the email logs (source of truth)."""
     stats = db.session.query(

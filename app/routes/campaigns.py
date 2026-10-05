@@ -76,6 +76,26 @@ def resume_campaign(campaign_id):
     return jsonify(campaign_service.resume_campaign(request.business_id, campaign_id).to_dict())
 
 
+@bp.post('/<campaign_id>/retry-failed')
+@require_auth
+def retry_failed(campaign_id):
+    return jsonify(campaign_service.retry_failed(request.business_id, campaign_id))
+
+
+@bp.post('/<campaign_id>/reset')
+@require_auth
+def reset_campaign(campaign_id):
+    data = get_json_body()
+    return jsonify(campaign_service.reset_campaign(request.business_id, campaign_id,
+                                                   restore_bounced=bool(data.get('restore_bounced'))))
+
+
+@bp.post('/<campaign_id>/duplicate')
+@require_auth
+def duplicate_campaign(campaign_id):
+    return jsonify(campaign_service.duplicate_campaign(request.business_id, campaign_id).to_dict()), 201
+
+
 @bp.post('/<campaign_id>/test')
 @require_auth
 def send_test(campaign_id):

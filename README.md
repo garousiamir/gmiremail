@@ -28,7 +28,7 @@ The dashboard is a single page served by the same Flask app, from `app/static/da
 | **Subscribers** | Search and filter by status, tag or segment; add and edit (tags, custom fields); per-subscriber activity; CSV import and export |
 | **Segments** | Visual rule builder with a live match count and sample; JSON mode for nested groups |
 | **Templates** | HTML editor with live preview (HTML and plain text), variable snippets, starter library |
-| **Campaigns** | Create, A/B subjects, send a test, send now, schedule, pause/resume; live stats, top links, A/B results |
+| **Campaigns** | Create, A/B subjects, send a test, send now, schedule, pause/resume; live stats, top links, A/B results; **retry failed**, **reset & resend** (after an SMTP problem) and **duplicate** |
 | **Automations** | Workflow builder (send, wait, if/else, tags, fields, unsubscribe) with branching; per-subscriber run history |
 | **Email logs** | Every queued or sent email, filterable by status, campaign and recipient |
 | **Settings** | Sender identity, SMTP (with connection test), API key copy/rotate, password, sign out everywhere, **download a full backup** (server owner) |

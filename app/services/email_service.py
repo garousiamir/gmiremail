@@ -288,6 +288,13 @@ def _send_one(pool, business, log):
         if kind == 'hard':
             handle_bounce(log, detail, bounce_type='hard', commit=False)
             return 'bounced'
+        if kind == 'policy':
+            # Rejected because of the sender/setup (relay denied, blocked, spam...):
+            # don't blame the subscriber; "Retry failed" can resend after a fix.
+            log.status = 'failed'
+            log.error_message = f'Rejected by the receiving server: {detail}'
+            log.next_attempt_at = None
+            return 'failed'
         _retry_later(log, detail, attempts_exhausted_status='bounced')
         if log.status == 'bounced':
             handle_bounce(log, detail, bounce_type='soft', commit=False)
