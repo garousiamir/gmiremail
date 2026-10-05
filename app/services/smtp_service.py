@@ -53,12 +53,37 @@ def connect_for_business(business):
                            business.smtp_password, business.smtp_tls)
 
 
+def explain_smtp_error(text, host, port):
+    """Turn a raw SMTP/TLS error into a hint about what to change."""
+    low = text.lower()
+    if 'certificate verify failed' in low or 'hostname mismatch' in low:
+        return (f"The server's TLS certificate is not valid for '{host}'. Use the exact hostname on the "
+                "mail server's certificate (not an IP address), or install a valid certificate for mail "
+                "(in Plesk: Tools & Settings > SSL/TLS Certificates > certificate for securing mail).")
+    if 'wrong version number' in low or 'unexpected eof' in low:
+        return ('TLS mismatch between port and setting: use port 587 with STARTTLS on, '
+                'or port 465 (SSL) for servers that expect TLS immediately.')
+    if any(s in low for s in ('timed out', 'connection refused', 'no route to host', 'unreachable')):
+        return (f'Cannot reach {host}:{port}. Check that the port is open on that server (in Plesk: '
+                'Tools & Settings > Mail Server Settings > "Enable mail submission port 587"), that its '
+                'firewall allows this server, and that Fail2Ban has not banned this server\'s IP.')
+    if 'name or service not known' in low or 'nodename nor servname' in low or 'getaddrinfo' in low:
+        return f"The hostname '{host}' does not resolve. Check the spelling."
+    if 'does not offer auth' in low:
+        return 'The server only allows login after STARTTLS: turn "Use STARTTLS" on.'
+    if '535' in low or 'authentication' in low:
+        return ('Username or password rejected. Use the full email address as the username and check '
+                'the mailbox password (and that the mailbox is allowed to send).')
+    return None
+
+
 def test_connection(business):
     """Try to connect + authenticate; returns (ok, message)."""
     try:
         conn = connect_for_business(business)
     except SMTPConnectionError as exc:
-        return False, str(exc)
+        hint = explain_smtp_error(str(exc), business.smtp_host, business.smtp_port)
+        return False, f'{exc}' + (f' -> {hint}' if hint else '')
     try:
         conn.quit()
     except smtplib.SMTPException:

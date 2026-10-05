@@ -37,4 +37,7 @@ def rotate_api_key():
 @require_auth
 def test_smtp():
     ok, message = smtp_service.test_connection(g.business)
-    return jsonify({'success': ok, 'message': message}), 200 if ok else 502
+    if not ok:
+        # 'error' is what the dashboard shows; keep 'message' for API clients
+        return jsonify({'success': False, 'error': message, 'message': message}), 502
+    return jsonify({'success': True, 'message': message})

@@ -109,7 +109,8 @@ def send_email(business_id, recipient_email, subject, html, text=None, from_emai
     try:
         conn = smtp_service.connect_for_business(business)
     except smtp_service.SMTPConnectionError as exc:
-        raise ServiceError(str(exc), 502)
+        hint = smtp_service.explain_smtp_error(str(exc), business.smtp_host, business.smtp_port)
+        raise ServiceError(f'{exc}' + (f' -> {hint}' if hint else ''), 502)
     try:
         conn.send_message(message)
     except Exception as exc:  # noqa: BLE001 - surface SMTP errors to the caller

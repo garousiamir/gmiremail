@@ -86,3 +86,26 @@ def test_client_ip_respects_trusted_proxies(trusted, expected):
         assert response.get_data(as_text=True) == expected
         db.session.remove()
         db.drop_all()
+
+
+def test_smtp_test_endpoint_reports_reason(client, auth, monkeypatch):
+    def fail(business):
+        raise smtp_service.SMTPConnectionError(
+            'SMTP connection to mail.example.com:587 failed: [SSL: CERTIFICATE_VERIFY_FAILED] '
+            'certificate verify failed: self-signed certificate')
+    monkeypatch.setattr(smtp_service, 'connect_for_business', fail)
+    response = client.post('/api/businesses/me/smtp/test', headers=auth)
+    assert response.status_code == 502
+    error = response.get_json()['error']
+    assert 'CERTIFICATE_VERIFY_FAILED' in error and 'certificate' in error and 'hostname' in error
+
+
+@pytest.mark.parametrize('raw, expected', [
+    ('[Errno 110] Connection timed out', 'Cannot reach'),
+    ('(535, b"5.7.8 Error: authentication failed")', 'Username or password rejected'),
+    ('[SSL: WRONG_VERSION_NUMBER] wrong version number', 'TLS mismatch'),
+    ('[Errno -2] Name or service not known', 'does not resolve'),
+    ('server does not offer AUTH (check the port and TLS setting)', 'STARTTLS'),
+])
+def test_explain_smtp_error(raw, expected):
+    assert expected in smtp_service.explain_smtp_error(raw, 'mail.example.com', 587)
