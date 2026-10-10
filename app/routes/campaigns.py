@@ -119,3 +119,28 @@ def send_test(campaign_id):
 @require_auth
 def campaign_analytics(campaign_id):
     return jsonify(campaign_service.get_campaign_analytics(request.business_id, campaign_id))
+
+
+@bp.post('/<campaign_id>/export')
+@require_auth
+def export_report(campaign_id):
+    """Campaign report: {"format": "xlsx"} (all sheets) or {"format": "csv", "part": "recipients|summary|links"}."""
+    from flask import Response
+    from app.services import report_service
+    data = get_json_body()
+    fmt, part = data.get('format', 'xlsx'), data.get('part', 'recipients')
+    if fmt not in report_service.FORMATS:
+        raise ServiceError('format must be "xlsx" or "csv"')
+    if fmt == 'csv' and part not in report_service.PARTS:
+        raise ServiceError(f'part must be one of: {", ".join(report_service.PARTS)}')
+    report = report_service.build_report(request.business_id, campaign_id)
+    if fmt == 'xlsx':
+        body = report_service.to_xlsx(report)
+        mimetype = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        name = report_service.filename(report, 'xlsx')
+    else:
+        body = '﻿' + report_service.to_csv(report, part)  # BOM so Excel reads UTF-8
+        mimetype = 'text/csv; charset=utf-8'
+        name = report_service.filename(report, 'csv', part)
+    return Response(body, mimetype=mimetype, headers={
+        'Content-Disposition': f'attachment; filename="{name}"', 'Cache-Control': 'no-store'})

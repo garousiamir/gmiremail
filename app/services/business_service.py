@@ -95,3 +95,17 @@ def revoke_tokens(business):
 def get_stats(business):
     from app.services.analytics_service import get_business_overview
     return get_business_overview(business.id)
+
+
+def delete_business(business, password, confirm):
+    """Permanently delete an account and everything in it (subscribers, campaigns, logs, ...)."""
+    if not business.check_password(password or ''):
+        raise ServiceError('Password is incorrect', 403)
+    if (confirm or '').strip().upper() != 'DELETE':
+        raise ServiceError('Type DELETE to confirm')
+    # Children first (reverse dependency order), so it works without database-level cascades
+    for table in reversed(db.metadata.sorted_tables):
+        if table.name != Business.__tablename__ and 'business_id' in table.c:
+            db.session.execute(table.delete().where(table.c.business_id == business.id))
+    db.session.delete(business)
+    db.session.commit()

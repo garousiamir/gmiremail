@@ -133,6 +133,7 @@ The script prints the DKIM record to publish. Add SPF and DMARC records for that
 | Automatic backups | `/var/backups/gmiremail/gmiremail-backup-YYYY-MM-DD.tar.gz` (daily, kept 14 days, same format) |
 | Restore a backup | `sudo deploy/restore.sh <file>.tar.gz` (see below) |
 | Certificate renewal | Automatic (certbot timer). Check with `sudo certbot renew --dry-run` |
+| Remove gmiremail | `sudo /opt/gmiremail/deploy/uninstall.sh` (see [Uninstalling](#uninstalling)) |
 
 **Firewall:** only SSH and web traffic need to be open, so port 25 does *not* need to accept inbound connections:
 
@@ -173,6 +174,34 @@ A copy in the same format is also saved automatically every night in `/var/backu
 6. When the new server is working, switch off the old one completely: `sudo systemctl disable --now gmiremail-web gmiremail-worker`.
 
 Everything comes back as it was: accounts and passwords, subscribers, campaign and automation history, analytics, and queued emails. Keep the same hostname. Links in emails that were already sent point to it.
+
+## Uninstalling
+
+To delete a single account (one business and all its data) without touching the server, use **Settings → Danger zone → Delete account** in the dashboard.
+
+To remove gmiremail from the server completely:
+
+```bash
+sudo /opt/gmiremail/deploy/uninstall.sh
+```
+
+It shows what it will remove and asks you to type `DELETE`. Then it:
+
+1. Saves a final full backup to `/root/gmiremail-final-backup-<date>.tar.gz`. You can restore it later with `install.sh --restore`.
+2. Stops and removes the `gmiremail-web` and `gmiremail-worker` services and the daily backup job.
+3. Removes the nginx site and the Let's Encrypt certificate for your hostname.
+4. Drops the PostgreSQL database and its user.
+5. Detaches DKIM signing from Postfix.
+6. Deletes `/etc/gmiremail`, `/var/backups/gmiremail`, the `gmiremail` system user and `/opt/gmiremail`.
+
+| Option | Meaning |
+|---|---|
+| `--no-backup` | Skip the final backup |
+| `--keep-backups` | Keep the daily backups in `/var/backups/gmiremail` |
+| `--remove-packages` | Also uninstall PostgreSQL, nginx, Postfix and OpenDKIM. Use this only if nothing else on the server needs them |
+| `--yes` | Don't ask for confirmation |
+
+Afterwards, delete the DNS records you added (A, SPF, DKIM, DMARC) if you no longer need them.
 
 ## Troubleshooting
 

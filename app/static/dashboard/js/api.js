@@ -117,7 +117,7 @@ export const api = {
   get: (path, params) => request(params ? `${path}?${qs(params)}` : path),
   post: (path, body = {}) => request(path, { method: 'POST', body }),
   put: (path, body = {}) => request(path, { method: 'PUT', body }),
-  del: (path) => request(path, { method: 'DELETE' }),
+  del: (path, body) => request(path, { method: 'DELETE', body }),
   upload: (path, form) => request(path, { method: 'POST', form }),
   publicPost: (path, body) => request(path, { method: 'POST', body, auth: false }),
   async download(path, body, filename) {

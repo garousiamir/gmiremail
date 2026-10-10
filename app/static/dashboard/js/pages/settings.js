@@ -1,5 +1,5 @@
 import { api, session } from '../api.js';
-import { busy, clear, copyText, field, fmtNum, formData, h, icon, navigate, pageHead, toast } from '../ui.js';
+import { busy, clear, copyText, field, fmtNum, formData, h, icon, modal, navigate, pageHead, toast } from '../ui.js';
 
 export async function render(main) {
   const business = await api.get('/api/businesses/me');
@@ -62,7 +62,54 @@ export async function render(main) {
       card('Sessions', null, h('p', { class: 'secondary' }, 'Sign out of every browser and invalidate all tokens.'), [
         h('button', { class: 'danger', onclick: async () => {
           try { await api.post('/api/auth/logout'); } finally { session.clear(); navigate('login'); }
-        } }, icon('logout'), 'Sign out everywhere')])));
+        } }, icon('logout'), 'Sign out everywhere')]),
+      dangerCard()));
+
+  function dangerCard() {
+    const uninstall = 'sudo /opt/gmiremail/deploy/uninstall.sh';
+    return h('div', { class: 'card danger-zone' },
+      h('div', { class: 'card-head' }, h('div', {}, h('h2', {}, 'Danger zone'),
+        h('div', { class: 'sub' }, 'Permanent actions. Download a backup first if you may need the data again.'))),
+      h('div', { class: 'danger-row' },
+        h('div', {}, h('strong', {}, 'Delete this account'),
+          h('p', { class: 'secondary' }, `Deletes ${business.name} with all its subscribers, templates, segments, campaigns, `
+            + 'automations, email logs and analytics. Other accounts on this server are not affected.')),
+        h('button', { class: 'danger', onclick: deleteAccountDialog }, icon('trash'), 'Delete account')),
+      business.is_admin ? h('div', { class: 'danger-row' },
+        h('div', {}, h('strong', {}, 'Remove gmiremail from this server'),
+          h('p', { class: 'secondary' }, 'Run this over SSH. It saves a final backup to /root, then removes the app, its database, '
+            + 'services, nginx site and certificate. It asks you to type DELETE before doing anything.'),
+          h('div', { class: 'copy-field' }, h('input', { value: uninstall, readonly: true, 'aria-label': 'Uninstall command' }),
+            h('button', { onclick: () => copyText(uninstall) }, icon('copy'), 'Copy'))),
+      ) : null);
+  }
+
+  function deleteAccountDialog() {
+    const pw = h('input', { type: 'password', autocomplete: 'current-password', required: true });
+    const confirmInput = h('input', { placeholder: 'DELETE', autocomplete: 'off', 'aria-label': 'Type DELETE to confirm' });
+    const btn = h('button', { class: 'danger solid', disabled: true, onclick: () => busy(btn, async () => {
+      await api.del('/api/businesses/me', { password: pw.value, confirm: confirmInput.value });
+      m.close();
+      session.clear();
+      toast({ title: 'Account deleted', message: 'All of its data has been removed.' });
+      navigate('login');
+    }) }, icon('trash'), 'Delete everything');
+    const update = () => { btn.disabled = !(pw.value && confirmInput.value.trim().toUpperCase() === 'DELETE'); };
+    pw.addEventListener('input', update);
+    confirmInput.addEventListener('input', update);
+    const m = modal({
+      title: 'Delete this account?',
+      body: h('div', { class: 'form' },
+        h('p', { style: { marginTop: 0 } }, 'This permanently deletes ', h('strong', {}, business.name), ' and ',
+          h('strong', {}, 'all'), ' of its subscribers, campaigns, templates, automations and analytics. It cannot be undone.'),
+        business.is_admin ? h('p', { class: 'error-text' }, 'You are the server owner. After this, backups can only be downloaded '
+          + 'by the next oldest account (or by ADMIN_EMAILS), so download a backup first.') : null,
+        field('Your password', pw),
+        field('Type DELETE to confirm', confirmInput)),
+      actions: [h('button', { onclick: () => m.close() }, 'Cancel'), btn],
+    });
+    pw.focus();
+  }
 
   function backupCard() {
     const counts = h('div', { class: 'small muted' }, 'Counting…');

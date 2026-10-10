@@ -28,10 +28,10 @@ The dashboard is a single page served by the same Flask app, from `app/static/da
 | **Subscribers** | Filter by search, status, tag, segment, **subscribed date range**, engagement score and any custom rule; filter chips; select rows or **all matching**, then bulk add/remove tag, change status, delete, or **create a campaign for them**; save the filters as a segment; add and edit, per-subscriber activity, CSV import and export |
 | **Segments** | Visual rule builder with a live match count and sample, including date ranges ("subscribed between") and "not in the last N days"; JSON mode for nested groups |
 | **Templates** | HTML editor with live preview (HTML and plain text), variable snippets, starter library |
-| **Campaigns** | Filter by status, name/subject and date. **Audience builder**: everyone, or any mix of segments, tags, hand-picked people and a custom filter, with segment/tag exclusions and a live recipient count. Create, A/B subjects, send a test, send now, schedule, pause/resume; live stats, top links, A/B results; **retry failed**, **reset & resend** (after an SMTP problem) and **duplicate** |
+| **Campaigns** | Filter by status, name/subject and date. **Audience builder**: everyone, or any mix of segments, tags, hand-picked people and a custom filter, with segment/tag exclusions and a live recipient count. Create, A/B subjects, send a test, send now, schedule, pause/resume; live stats, top links, A/B results; **retry failed**, **reset & resend** (after an SMTP problem) and **duplicate**; **export a report** per campaign as Excel (Summary, Recipients, Links sheets) or CSV |
 | **Automations** | Workflow builder (send, wait, if/else, tags, fields, unsubscribe) with branching; per-subscriber run history |
 | **Email logs** | Every queued or sent email, filterable by status, campaign, recipient, subject and date range |
-| **Settings** | Sender identity, SMTP (with connection test), API key copy/rotate, password, sign out everywhere, **download a full backup** (server owner) |
+| **Settings** | Sender identity, SMTP (with connection test), API key copy/rotate, password, sign out everywhere, **download a full backup** (server owner), **delete the account** and all its data, and the command to remove gmiremail from the server |
 
 It follows the system light/dark theme and works on phones. Charts have hover tooltips and a "Show as table" view. Requests show a top progress bar, buttons show a spinner while they work, pages show skeletons while loading, and notifications are toasts with a title, icon and timer.
 
@@ -100,6 +100,8 @@ Every endpoint listed in `docs/QUICK_REFERENCE.md` is implemented. These were ad
 | `POST /api/subscribers/query` | Paginated search with every filter in a JSON body (see below) |
 | `POST /api/subscribers/bulk-action` | `{"action": "add_tag"/"remove_tag"/"set_status"/"delete", "value", "ids": [...]}` or `"filters": {...}` for everyone matching |
 | `POST /api/campaigns/audience/preview` | Recipient count + sample for an unsaved audience |
+| `POST /api/campaigns/:id/export` | Campaign report: `{"format": "xlsx"}`, or `{"format": "csv", "part": "recipients"/"summary"/"links"}` |
+| `DELETE /api/businesses/me` | Delete the account and all its data: `{"password", "confirm": "DELETE"}` |
 
 List endpoints take `?page=&per_page=` (max 100). Dates (`date_from`, `date_to`, `subscribed_from`, ...) are `YYYY-MM-DD` or ISO datetimes; a plain `date_to` includes that whole day.
 

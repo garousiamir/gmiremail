@@ -156,6 +156,7 @@ export async function renderDetail(main, id) {
     if (['sent', 'paused'].includes(c.status)) {
       out.push(act('Reset & resend', null, () => resetDialog(c, a, load)));
     }
+    if (!['draft', 'scheduled'].includes(c.status)) out.push(act('Export report', 'download', () => exportDialog(c)));
     out.push(act('Duplicate', 'copy', async () => {
       const copy = await api.post(`/api/campaigns/${c.id}/duplicate`);
       toast('Copied as a new draft');
@@ -297,3 +298,26 @@ function testDialog(c) {
   actions: [h('button', { onclick: () => m.close() }, 'Cancel'), btn] });
 }
 
+
+function exportDialog(c) {
+  const slug = (c.name || 'campaign').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'campaign';
+  const day = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const option = (title, text, fmt, part) => {
+    const btn = h('button', { type: 'button', class: 'aud-option', onclick: () => busy(btn, async () => {
+      const name = fmt === 'xlsx' ? `${slug}-report-${day}.xlsx` : `${slug}-${part}-report-${day}.csv`;
+      await api.download(`/api/campaigns/${c.id}/export`, { format: fmt, part }, name);
+      toast({ title: 'Report downloaded', message: name });
+    }) }, h('strong', {}, icon(fmt === 'xlsx' ? 'sheet' : 'download'), title), h('span', {}, text));
+    return btn;
+  };
+  const m = modal({
+    title: `Export report: ${c.name}`,
+    body: h('div', { class: 'stack', style: { gap: '10px' } },
+      option('Excel workbook (.xlsx)', 'Everything in one file: Summary, Recipients and Links sheets', 'xlsx'),
+      option('Recipients (.csv)', 'One row per person: delivery status, opens, clicks, links clicked, bounce, unsubscribe', 'csv', 'recipients'),
+      option('Summary (.csv)', 'Totals and rates: sent, opens, clicks, bounces, unsubscribes, A/B results', 'csv', 'summary'),
+      option('Links (.csv)', 'Each link with its clicks and unique clickers', 'csv', 'links'),
+      h('p', { class: 'small muted', style: { margin: '4px 0 0' } }, 'Times are in UTC.')),
+    actions: [h('button', { onclick: () => m.close() }, 'Close')],
+  });
+}
