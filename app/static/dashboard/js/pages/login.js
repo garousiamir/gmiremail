@@ -1,5 +1,6 @@
 import { api, errorMessage, session } from '../api.js';
 import { clear, field, formData, h, icon, navigate } from '../ui.js';
+import { themeButton } from '../theme.js';
 
 export function render(root) {
   let mode = 'login';
@@ -83,7 +84,7 @@ export function render(root) {
           feature('overview', 'Opens, clicks and growth at a glance'),
           feature('shield', 'Self-hosted, DKIM-signed, private by default'))),
       h('div', { class: 'small', style: { color: 'rgba(255,255,255,.6)' } }, 'Self-hosted · Multi-brand · Open source')),
-    h('section', { class: 'auth-panel' }, h('div', { class: 'auth-card' },
+    h('section', { class: 'auth-panel' }, themeButton('auth-theme'), h('div', { class: 'auth-card' },
       h('div', { class: 'brand' }, h('div', { class: 'brand-mark' }, icon('mail')), h('span', {}, 'gmiremail')),
       h('h2', {}, 'Welcome'),
       h('p', { class: 'muted' }, 'Sign in to your workspace or create a new one.'),

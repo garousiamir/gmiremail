@@ -1,5 +1,6 @@
 import { onUnauthorized, session } from './api.js';
 import { clear, emptyState, h, icon, initials, navigate, toastError } from './ui.js';
+import { themeButton } from './theme.js';
 import * as login from './pages/login.js';
 import * as overview from './pages/overview.js';
 import * as subscribers from './pages/subscribers.js';
@@ -61,6 +62,7 @@ function shell(section) {
         h('div', { class: 'avatar', 'aria-hidden': 'true' }, initials(business?.name)),
         h('div', { class: 'who', title: business?.account_email },
           h('strong', {}, business?.name || ''), h('span', {}, business?.account_email || '')),
+        themeButton(),
         h('button', { class: 'icon', onclick: logout, title: 'Sign out', 'aria-label': 'Sign out' }, icon('logout')))),
     main);
   clear(root, layout);

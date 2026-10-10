@@ -33,7 +33,7 @@ The dashboard is a single page served by the same Flask app, from `app/static/da
 | **Email logs** | Every queued or sent email, filterable by status, campaign, recipient, subject and date range |
 | **Settings** | Sender identity, SMTP (with connection test), API key copy/rotate, password, sign out everywhere, **download a full backup** (server owner), **delete the account** and all its data, and the command to remove gmiremail from the server |
 
-It follows the system light/dark theme and works on phones. Charts have hover tooltips and a "Show as table" view. Requests show a top progress bar, buttons show a spinner while they work, pages show skeletons while loading, and notifications are toasts with a title, icon and timer.
+It follows the system light/dark theme, or you can force light or dark with the sun/moon button next to Sign out (also on the login page). It works on phones. Charts have hover tooltips and a "Show as table" view. Requests show a top progress bar, buttons show a spinner while they work, pages show skeletons while loading, and notifications are toasts with a title, icon and timer.
 
 Run the tests (in-memory SQLite by default; set `TEST_DATABASE_URL` to use PostgreSQL):
 
