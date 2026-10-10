@@ -1,50 +1,64 @@
 import { api } from '../api.js';
 import { lineChart } from '../charts.js';
 import {
-  badge, busy, clear, confirmDialog, field, fmtDate, fmtNum, fmtPct, h, icon, loading, localInputToIso, modal,
-  navigate, pageHead, pager, select, table, tile, toast,
+  badge, busy, clear, confirmDialog, debounce, emptyState, field, fmtDate, fmtNum, fmtPct, h, icon, loading, loadingTiles,
+  localInputToIso, modal, navigate, pageHead, pager, select, table, tile, toast,
 } from '../ui.js';
+import { audienceBuilder } from '../components/audience.js';
+import { dateRange } from '../components/daterange.js';
+import { loadRuleContext } from '../components/rules.js';
 
 const STATUS_TABS = ['', 'draft', 'scheduled', 'sending', 'paused', 'sent'];
 
 export async function renderList(main) {
-  const state = { page: 1, status: '' };
+  const state = { page: 1, status: '', search: '', range: { from: '', to: '' } };
   const host = h('div', {}, loading());
-  const tabs = h('div', { class: 'tabs', style: { margin: '0 0 14px', maxWidth: '560px' } });
+  const tabs = h('div', { class: 'tabs', style: { margin: 0 } });
   const drawTabs = () => clear(tabs, STATUS_TABS.map((st) => h('button', {
     class: state.status === st ? 'active' : '', onclick: () => { state.status = st; state.page = 1; drawTabs(); load(); },
   }, st ? st[0].toUpperCase() + st.slice(1) : 'All')));
+  const search = h('input', { type: 'search', placeholder: 'Search campaigns', 'aria-label': 'Search campaigns',
+    oninput: debounce(() => { state.search = search.value.trim(); state.page = 1; load(); }) });
+  const range = dateRange({ label: 'Date', onChange: (r) => { state.range = r; state.page = 1; load(); } });
 
-  clear(main, pageHead('Campaigns', 'One-off emails to your list or a segment', [
+  clear(main, pageHead('Campaigns', 'Emails to your whole list, segments, tags or hand-picked people', [
     h('button', { class: 'primary', onclick: () => campaignDialog(null) }, icon('plus'), 'New campaign'),
-  ]), h('div', { class: 'card' }, tabs, host));
+  ]), h('div', { class: 'card' }, h('div', { class: 'toolbar' }, tabs, h('span', { class: 'grow' }), search, range.el), host));
   drawTabs();
 
   async function load() {
-    const data = await api.get('/api/campaigns', { page: state.page, per_page: 25, status: state.status });
+    const data = await api.get('/api/campaigns', { page: state.page, per_page: 25, status: state.status, search: state.search,
+      date_from: state.range.from, date_to: state.range.to });
+    const filtered = state.status || state.search || state.range.from || state.range.to;
     clear(host, table([
-      { label: 'Campaign', render: (c) => h('div', {}, h('a', { href: `#/campaigns/${c.id}` }, c.name),
-        h('div', { class: 'small muted' }, c.template_name || '')) },
+      { label: 'Campaign', render: (c) => h('div', {}, h('a', { class: 'cell-main', href: `#/campaigns/${c.id}` }, c.name),
+        h('div', { class: 'cell-sub' }, c.template_name || '')) },
       { label: 'Status', render: (c) => badge(c.status) },
-      { label: 'Audience', render: (c) => c.segment_name || h('span', { class: 'muted' }, 'All active') },
+      { label: 'Audience', render: (c) => h('span', { class: 'secondary' }, c.audience_summary) },
       { label: 'Sent', class: 'num', render: (c) => `${fmtNum(c.total_sent)}${c.total_recipients ? ` / ${fmtNum(c.total_recipients)}` : ''}` },
       { label: 'Opens', class: 'num', render: (c) => (c.total_sent ? fmtPct(c.open_rate) : '—') },
       { label: 'Clicks', class: 'num', render: (c) => (c.total_sent ? fmtPct(c.click_rate) : '—') },
-      { label: 'Date', render: (c) => h('span', { class: 'nowrap' }, c.status === 'scheduled'
+      { label: 'Date', render: (c) => h('span', { class: 'nowrap muted' }, c.status === 'scheduled'
         ? `Scheduled ${fmtDate(c.scheduled_time)}` : fmtDate(c.send_time || c.created_at)) },
     ], data.items, {
       onRowClick: (c) => navigate(`campaigns/${c.id}`),
-      empty: state.status ? `No ${state.status} campaigns.` : h('div', {}, 'No campaigns yet.', h('br'),
-        h('button', { class: 'primary', onclick: () => campaignDialog(null) }, 'Create your first campaign')),
+      empty: filtered ? emptyState('filter', 'No matches', 'No campaigns match these filters.')
+        : emptyState('send', 'No campaigns yet', 'Send your first email to everyone, a segment, a tag or a few chosen people.',
+          h('button', { class: 'primary', onclick: () => campaignDialog(null) }, icon('plus'), 'Create your first campaign')),
     }), pager(data, (p) => { state.page = p; load(); }));
   }
   await load();
 }
 
-async function campaignDialog(campaign, onSaved) {
-  const [templates, segments] = await Promise.all([
+/**
+ * New / edit campaign dialog. preset = { audience, picked: {id: email} } pre-fills the audience
+ * (used by "Create campaign" on selected subscribers).
+ */
+export async function campaignDialog(campaign, onSaved, preset = {}) {
+  const [templates, segments, context] = await Promise.all([
     api.get('/api/templates', { per_page: 100 }).then((d) => d.items),
     api.get('/api/segments', { per_page: 100 }).then((d) => d.items),
+    loadRuleContext(),
   ]);
   if (!templates.length) {
     if (await confirmDialog('You need a template first', 'Campaigns send a template. Create one now?', { confirmLabel: 'Create template' })) {
@@ -53,31 +67,35 @@ async function campaignDialog(campaign, onSaved) {
     return;
   }
   const isNew = !campaign;
-  const name = h('input', { required: true, value: campaign?.name || '' });
+  const startAudience = preset.audience !== undefined ? preset.audience
+    : campaign?.audience || (campaign?.segment_id ? { segment_ids: [campaign.segment_id] } : null);
+  const name = h('input', { required: true, value: campaign?.name || '', placeholder: 'e.g. October newsletter' });
   const template = select(templates.map((t) => ({ value: t.id, label: t.name })), campaign?.template_id || templates[0].id);
-  const segment = select([{ value: '', label: 'All active subscribers' }, ...segments.map((s) => ({ value: s.id, label: `${s.name} (${fmtNum(s.subscriber_count)})` }))],
-    campaign?.segment_id || '');
   const subject = h('input', { value: campaign?.subject_line || '', placeholder: "Leave empty to use the template's subject" });
   const variants = h('textarea', { style: { minHeight: '70px' }, value: (campaign?.subject_variants || []).join('\n'),
     placeholder: 'One subject per line. Recipients are split evenly between them.' });
-  const saveBtn = h('button', { class: 'primary', onclick: save }, isNew ? 'Create campaign' : 'Save');
+  const audience = audienceBuilder({ audience: startAudience, segments, context, picked: preset.picked || {} });
+  const saveBtn = h('button', { class: 'primary', onclick: save }, icon('check'), isNew ? 'Create campaign' : 'Save');
 
   const m = modal({
     title: isNew ? 'New campaign' : 'Edit campaign',
-    body: h('div', { class: 'form' },
-      field('Campaign name', name, 'Only you see this'),
-      field('Template', template),
-      field('Send to', segment),
-      field('Subject line override', subject, 'Variables like {{ first_name }} work here too'),
-      h('details', { class: 'more', open: (campaign?.subject_variants || []).length > 0 },
-        h('summary', {}, 'A/B test subject lines'), variants)),
+    wide: true,
+    body: h('div', { class: 'grid grid-2', style: { alignItems: 'start' } },
+      h('div', { class: 'form' },
+        field('Campaign name', name, 'Only you see this'),
+        field('Template', template),
+        field('Subject line override', subject, 'Variables like {{ first_name }} work here too'),
+        h('details', { class: 'more', open: (campaign?.subject_variants || []).length > 0 },
+          h('summary', {}, 'A/B test subject lines'), variants)),
+      h('div', {}, h('label', { class: 'field', style: { marginBottom: '6px' } }, 'Send to'), audience.el)),
     actions: [h('button', { onclick: () => m.close() }, 'Cancel'), saveBtn],
   });
 
   async function save() {
     if (!name.value.trim()) { toast('Give the campaign a name', 'error'); name.focus(); return; }
+    if (!audience.isValid()) { toast({ type: 'error', title: 'Choose who receives it', message: 'Pick at least one segment, tag, person or rule, or choose Everyone.' }); return; }
     const body = {
-      name: name.value.trim(), template_id: template.value, segment_id: segment.value || null,
+      name: name.value.trim(), template_id: template.value, segment_id: null, audience: audience.get(),
       subject_line: subject.value.trim() || null,
       subject_variants: variants.value.split('\n').map((v) => v.trim()).filter(Boolean),
     };
@@ -85,7 +103,7 @@ async function campaignDialog(campaign, onSaved) {
     await busy(saveBtn, async () => {
       const saved = isNew ? await api.post('/api/campaigns', body) : await api.put(`/api/campaigns/${campaign.id}`, body);
       m.close();
-      toast(isNew ? 'Campaign created' : 'Campaign saved');
+      toast({ title: isNew ? 'Campaign created' : 'Campaign saved', message: `Audience: ${saved.audience_summary}` });
       if (isNew) navigate(`campaigns/${saved.id}`); else onSaved?.();
     });
   }
@@ -93,7 +111,7 @@ async function campaignDialog(campaign, onSaved) {
 
 export async function renderDetail(main, id) {
   let timer = null;
-  const body = h('div', {}, loading());
+  const body = h('div', {}, loadingTiles(6), h('div', { class: 'card' }, loading(4)));
 
   async function load() {
     const a = await api.get(`/api/campaigns/${id}/analytics`);
@@ -115,8 +133,11 @@ export async function renderDetail(main, id) {
       out.push(act('Send test', null, () => testDialog(c)));
       out.push(act('Schedule', 'clock', () => scheduleDialog(c, load)));
       out.push(act('Send now', 'send', async () => {
-        const audience = c.segment_name ? `subscribers in "${c.segment_name}"` : 'all active subscribers';
-        if (!await confirmDialog('Send campaign now?', `This emails ${audience}. It cannot be undone.`, { confirmLabel: 'Send now' })) return;
+        const who = await api.post('/api/campaigns/audience/preview', {
+          audience: c.audience || (c.segment_id ? { segment_ids: [c.segment_id] } : null) });
+        if (!await confirmDialog('Send campaign now?',
+          `This emails ${fmtNum(who.recipients)} ${who.recipients === 1 ? 'person' : 'people'} (${c.audience_summary}). It cannot be undone.`,
+          { confirmLabel: `Send to ${fmtNum(who.recipients)}` })) return;
         const r = await api.post(`/api/campaigns/${c.id}/send`, {});
         toast(r.message);
         await load();
@@ -158,7 +179,7 @@ export async function renderDetail(main, id) {
       h('div', { class: 'card-head' }, h('h2', {}, 'Details'), badge(c.status)),
       h('dl', { class: 'dl' },
         h('dt', {}, 'Template'), h('dd', {}, c.template_id ? h('a', { href: `#/templates/${c.template_id}` }, c.template_name || 'Template') : '—'),
-        h('dt', {}, 'Audience'), h('dd', {}, c.segment_id ? h('a', { href: `#/segments/${c.segment_id}` }, c.segment_name) : 'All active subscribers'),
+        h('dt', {}, 'Audience'), h('dd', {}, c.audience_summary),
         h('dt', {}, 'Subject'), h('dd', {}, c.subject_line || h('span', { class: 'muted' }, "Template's subject")),
         c.subject_variants.length ? [h('dt', {}, 'A/B subjects'), h('dd', {}, c.subject_variants.map((v) => h('div', {}, v)))] : null,
         c.scheduled_time ? [h('dt', {}, 'Scheduled'), h('dd', {}, fmtDate(c.scheduled_time))] : null,

@@ -1,9 +1,9 @@
 import { api } from '../api.js';
 import {
-  badge, busy, clear, confirmDialog, field, fmtDate, h, icon, loading, navigate, pageHead, pager, relTime,
+  badge, busy, clear, confirmDialog, emptyState, field, fmtDate, h, icon, loading, navigate, pageHead, pager, relTime,
   select, table, toast, toastError,
 } from '../ui.js';
-import { parseValue } from './subscribers.js';
+import { parseValue } from '../components/rules.js';
 
 const TRIGGERS = [
   { value: 'new_subscriber', label: 'A subscriber joins' },
@@ -42,23 +42,28 @@ function describeTrigger(a, campaigns = []) {
 }
 
 export async function renderList(main) {
-  let page = 1;
+  const state = { page: 1, status: '', trigger_type: '' };
   const host = h('div', {}, loading());
+  const reload = () => { state.page = 1; load(); };
+  const toolbar = h('div', { class: 'toolbar' },
+    select([{ value: '', label: 'Any status' }, { value: 'active', label: 'Active' }, { value: 'inactive', label: 'Off' }, { value: 'paused', label: 'Paused' }],
+      '', { 'aria-label': 'Status', onchange: (e) => { state.status = e.target.value; reload(); } }),
+    select([{ value: '', label: 'Any trigger' }, ...TRIGGERS], '', { 'aria-label': 'Trigger', onchange: (e) => { state.trigger_type = e.target.value; reload(); } }));
   clear(main, pageHead('Automations', 'Workflows that run by themselves when something happens', [
     h('button', { class: 'primary', onclick: () => navigate('automations/new') }, icon('plus'), 'New automation'),
-  ]), h('div', { class: 'card' }, host));
+  ]), h('div', { class: 'card' }, toolbar, host));
 
   async function load() {
-    const data = await api.get('/api/automations', { page, per_page: 25 });
+    const data = await api.get('/api/automations', { page: state.page, per_page: 25, status: state.status, trigger_type: state.trigger_type });
     clear(host, table([
-      { label: 'Name', render: (a) => h('a', { href: `#/automations/${a.id}` }, a.name) },
-      { label: 'Trigger', render: (a) => describeTrigger(a) },
+      { label: 'Automation', render: (a) => h('div', {}, h('a', { class: 'cell-main', href: `#/automations/${a.id}` }, a.name),
+        h('div', { class: 'cell-sub' }, describeTrigger(a))) },
       { label: 'Steps', class: 'num', render: (a) => a.workflow.steps.length },
       { label: 'Status', render: (a) => badge(a.status) },
-      { label: 'Updated', render: (a) => relTime(a.updated_at) },
+      { label: 'Updated', render: (a) => h('span', { class: 'muted' }, relTime(a.updated_at)) },
       { label: '', render: (a) => {
         const on = a.status === 'active';
-        const b = h('button', { class: 'sm', onclick: () => busy(b, async () => {
+        const b = h('button', { class: on ? 'sm' : 'primary sm', onclick: () => busy(b, async () => {
           await api.post(`/api/automations/${a.id}/${on ? 'deactivate' : 'activate'}`);
           toast(on ? 'Automation turned off' : 'Automation turned on');
           load();
@@ -67,9 +72,10 @@ export async function renderList(main) {
       } },
     ], data.items, {
       onRowClick: (a) => navigate(`automations/${a.id}`),
-      empty: h('div', {}, 'No automations yet. A welcome series is a good first one.', h('br'),
-        h('button', { class: 'primary', onclick: () => navigate('automations/new') }, 'Create an automation')),
-    }), pager(data, (p) => { page = p; load(); }));
+      empty: state.status || state.trigger_type ? 'No automations match these filters.' : emptyState('zap', 'No automations yet',
+        'A welcome series is a great first one: it greets every new subscriber automatically.',
+        h('button', { class: 'primary', onclick: () => navigate('automations/new') }, icon('plus'), 'Create an automation')),
+    }), pager(data, (p) => { state.page = p; load(); }));
   }
   await load();
 }

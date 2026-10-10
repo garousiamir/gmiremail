@@ -18,6 +18,8 @@ class Campaign(db.Model):
     # Optional override of the template subject, and A/B subject variants
     subject_line = db.Column(db.String(500))
     subject_variants = db.Column(db.JSON, nullable=False, default=list)
+    # Who receives it (see audience_service); NULL = all active / legacy segment_id
+    audience = db.Column(db.JSON)
 
     scheduled_time = db.Column(db.DateTime, index=True)
     send_time = db.Column(db.DateTime)
@@ -37,6 +39,15 @@ class Campaign(db.Model):
     segment = db.relationship('Segment')
     email_logs = db.relationship('EmailLog', backref='campaign', lazy='dynamic', passive_deletes=True)
 
+    def audience_summary(self):
+        from app.services.audience_service import describe
+        if self.audience:
+            from app.models import Segment
+            ids = (self.audience.get('segment_ids') or [])[:2]
+            names = {s.id: s.name for s in Segment.query.filter(Segment.id.in_(ids))} if ids else {}
+            return describe(self.audience, names)
+        return self.segment.name if self.segment else 'All active subscribers'
+
     def to_dict(self):
         return {
             'id': self.id,
@@ -45,6 +56,8 @@ class Campaign(db.Model):
             'segment_id': self.segment_id,
             'template_name': self.template.name if self.template else None,
             'segment_name': self.segment.name if self.segment else None,
+            'audience': self.audience,
+            'audience_summary': self.audience_summary(),
             'name': self.name,
             'status': self.status,
             'subject_line': self.subject_line,

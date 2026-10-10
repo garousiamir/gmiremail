@@ -1,10 +1,11 @@
 from collections import defaultdict
+from datetime import timedelta
 
 from sqlalchemy import func, insert
 
 from app import db
 from app.models import Business, Campaign, EmailEvent, EmailLog, Subscriber
-from app.services import email_service, segment_service, template_service
+from app.services import audience_service, email_service, segment_service, template_service
 from app.utils.helpers import NotFoundError, ServiceError, new_id, parse_datetime, percentage, utcnow
 
 INSERT_CHUNK = 1000
@@ -29,14 +30,26 @@ def get_campaign(business_id, campaign_id):
     return campaign
 
 
-def list_campaigns(business_id, status=None):
+def list_campaigns(business_id, status=None, search=None, date_from=None, date_to=None):
     query = Campaign.query.filter_by(business_id=business_id)
     if status:
         query = query.filter_by(status=status)
+    if search:
+        query = query.filter(Campaign.name.ilike(f'%{search.strip()}%'))
+    # Date range over when it was sent (or created, for drafts)
+    when = func.coalesce(Campaign.send_time, Campaign.scheduled_time, Campaign.created_at)
+    if date_from:
+        query = query.filter(when >= parse_datetime(date_from))
+    if date_to:
+        end = parse_datetime(date_to)
+        if len(str(date_to).strip()) == 10:
+            end += timedelta(days=1)
+        query = query.filter(when < end)
     return query.order_by(Campaign.created_at.desc())
 
 
-def create_campaign(business_id, template_id, segment_id, name, subject_line=None, subject_variants=None):
+def create_campaign(business_id, template_id, segment_id, name, subject_line=None, subject_variants=None,
+                    audience=None):
     if not name:
         raise ServiceError('Campaign name is required')
     if not template_id:
@@ -49,6 +62,7 @@ def create_campaign(business_id, template_id, segment_id, name, subject_line=Non
     campaign = Campaign(
         business_id=business_id, template_id=template_id, segment_id=segment_id or None, name=name,
         subject_line=subject_line or None, subject_variants=_validate_variants(subject_variants), status='draft',
+        audience=audience_service.validate_audience(business_id, audience),
     )
     db.session.add(campaign)
     db.session.commit()
@@ -57,7 +71,7 @@ def create_campaign(business_id, template_id, segment_id, name, subject_line=Non
 
 def update_campaign(business_id, campaign_id, data):
     campaign = get_campaign(business_id, campaign_id)
-    content_fields = {'template_id', 'segment_id', 'subject_line', 'subject_variants'}
+    content_fields = {'template_id', 'segment_id', 'subject_line', 'subject_variants', 'audience'}
     if content_fields & set(data) and campaign.status not in ('draft', 'scheduled'):
         raise ServiceError(f'Cannot change the content of a {campaign.status} campaign', 409)
     if 'name' in data:
@@ -77,6 +91,8 @@ def update_campaign(business_id, campaign_id, data):
         campaign.subject_line = data['subject_line'] or None
     if 'subject_variants' in data:
         campaign.subject_variants = _validate_variants(data['subject_variants'])
+    if 'audience' in data:
+        campaign.audience = audience_service.validate_audience(business_id, data['audience'])
     if 'scheduled_time' in data:
         if campaign.status not in ('draft', 'scheduled'):
             raise ServiceError('Only draft or scheduled campaigns can be rescheduled', 409)
@@ -100,11 +116,14 @@ def delete_campaign(business_id, campaign_id):
 
 def create_email_logs_from_segment(campaign, segment_id=None):
     """Queue one pending email log per active recipient. Idempotent."""
-    rules = None
-    segment_id = segment_id or campaign.segment_id
-    if segment_id:
-        rules = segment_service.get_segment(campaign.business_id, segment_id).filter_rules
-    recipients = segment_service.subscribers_query(campaign.business_id, rules, only_active=True)
+    if campaign.audience and not segment_id:
+        recipients = audience_service.audience_query(campaign.business_id, campaign.audience)
+    else:
+        rules = None
+        segment_id = segment_id or campaign.segment_id
+        if segment_id:
+            rules = segment_service.get_segment(campaign.business_id, segment_id).filter_rules
+        recipients = segment_service.subscribers_query(campaign.business_id, rules, only_active=True)
     already = db.select(EmailLog.subscriber_id).where(EmailLog.campaign_id == campaign.id)
     recipients = recipients.filter(Subscriber.id.notin_(already)).order_by(Subscriber.created_at)
 
@@ -275,6 +294,7 @@ def duplicate_campaign(business_id, campaign_id):
         business_id=business_id, template_id=source.template_id, segment_id=source.segment_id,
         name=f'{source.name} (copy)'[:255], subject_line=source.subject_line,
         subject_variants=list(source.subject_variants or []), status='draft',
+        audience=dict(source.audience) if source.audience else None,
     )
     db.session.add(copy)
     db.session.commit()

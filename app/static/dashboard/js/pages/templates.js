@@ -1,29 +1,33 @@
 import { api, errorMessage } from '../api.js';
 import {
-  busy, clear, confirmDialog, debounce, field, h, icon, loading, modal, navigate, pageHead, pager, relTime,
+  busy, clear, confirmDialog, debounce, emptyState, field, h, icon, loading, modal, navigate, pageHead, pager, relTime,
   table, toast, toastError,
 } from '../ui.js';
 
 export async function renderList(main) {
   let page = 1;
+  let search = '';
   const host = h('div', {}, loading());
+  const searchBox = h('input', { type: 'search', placeholder: 'Search templates', 'aria-label': 'Search templates',
+    oninput: debounce(() => { search = searchBox.value.trim(); page = 1; load(); }) });
   clear(main, pageHead('Templates', 'Reusable email designs with {{ variables }}', [
-    h('button', { onclick: libraryDialog }, 'Start from library'),
+    h('button', { onclick: libraryDialog }, icon('sparkles'), 'Start from library'),
     h('button', { class: 'primary', onclick: () => navigate('templates/new') }, icon('plus'), 'New template'),
-  ]), h('div', { class: 'card' }, host));
+  ]), h('div', { class: 'card' }, h('div', { class: 'toolbar' }, searchBox), host));
 
   async function load() {
-    const data = await api.get('/api/templates', { page, per_page: 25 });
+    const data = await api.get('/api/templates', { page, per_page: 25, search });
     clear(host, table([
-      { label: 'Name', render: (t) => h('a', { href: `#/templates/${t.id}` }, t.name) },
-      { label: 'Subject', key: 'subject_line' },
+      { label: 'Template', render: (t) => h('div', {}, h('a', { class: 'cell-main', href: `#/templates/${t.id}` }, t.name),
+        h('div', { class: 'cell-sub' }, t.subject_line)) },
       { label: 'Variables', render: (t) => t.template_variables.length
         ? t.template_variables.map((v) => h('span', { class: 'chip' }, v)) : h('span', { class: 'muted' }, '—') },
-      { label: 'Updated', render: (t) => relTime(t.updated_at) },
+      { label: 'Updated', render: (t) => h('span', { class: 'muted' }, relTime(t.updated_at)) },
     ], data.items, {
       onRowClick: (t) => navigate(`templates/${t.id}`),
-      empty: h('div', {}, 'No templates yet.', h('br'),
-        h('button', { class: 'primary', onclick: libraryDialog }, 'Start from a ready-made template')),
+      empty: search ? 'No templates match your search.' : emptyState('template', 'No templates yet',
+        'Start from a ready-made responsive design or write your own HTML.',
+        h('button', { class: 'primary', onclick: libraryDialog }, icon('sparkles'), 'Browse the library')),
     }), pager(data, (p) => { page = p; load(); }));
   }
   await load();

@@ -9,8 +9,10 @@ export function h(tag, attrs = {}, ...children) {
     else if (key === 'style' && typeof value === 'object') Object.assign(el.style, value);
     else if (key.startsWith('on') && typeof value === 'function') el.addEventListener(key.slice(2).toLowerCase(), value);
     else if (key === 'value') el.value = value;
-    else if (key === 'checked' || key === 'selected' || key === 'disabled') el[key] = Boolean(value);
-    else el.setAttribute(key, value === true ? '' : value);
+    else if (['checked', 'selected', 'disabled', 'open', 'hidden', 'multiple', 'required', 'readonly'].includes(key)) {
+      if (value) el.setAttribute(key, '');
+      if (key in el) el[key] = Boolean(value);
+    } else el.setAttribute(key, value === true ? '' : value);
   }
   append(el, children);
   return el;
@@ -66,36 +68,85 @@ const ICONS = {
   play: 'M5 3l14 9-14 9V3z',
   clock: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 6v6l4 2',
   back: 'M19 12H5M12 19l-7-7 7-7',
+  check: 'M20 6 9 17l-5-5',
+  alert: 'M12 9v4M12 17h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z',
+  info: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 16v-4M12 8h.01',
+  tag: 'M20.59 13.41 13.42 20.58a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82zM7 7h.01',
+  sliders: 'M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6',
+  calendar: 'M3 4h18v18H3zM16 2v4M8 2v4M3 10h18',
+  eye: 'M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
+  target: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 18a6 6 0 1 0 0-12 6 6 0 0 0 0 12zM12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4z',
+  click: 'M9 9l5 12 1.8-5.2L21 14 9 9zM7.2 2.2 8 5.1M5.1 8 2.2 7.2M14 4.1 12 6.2M6.2 12l-2.1 2',
+  inbox: 'M22 12h-6l-2 3h-4l-2-3H2M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z',
+  bounce: 'M3 12h4l3-9 4 18 3-9h4',
+  userx: 'M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M8.5 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M18 8l5 5M23 8l-5 5',
+  gauge: 'M12 14l4-4M3.34 19a10 10 0 1 1 17.32 0',
+  sparkles: 'M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3zM19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9L19 15z',
+  shield: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z',
 };
 
 export function icon(name) {
-  return s('svg', { viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': 2,
+  return s('svg', { viewBox: '0 0 24 24', width: 16, height: 16, fill: 'none', stroke: 'currentColor', 'stroke-width': 2,
     'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' },
   s('path', { d: ICONS[name] || '' }));
 }
 
 // ---------- feedback ----------
-export function toast(message, type = 'info') {
-  const el = h('div', { class: `toast ${type}`, role: type === 'error' ? 'alert' : 'status' }, message);
+const TOAST_ICON = { success: 'check', error: 'alert', warning: 'alert', info: 'info' };
+const TOAST_TITLE = { success: 'Done', error: 'Something went wrong', warning: 'Heads up', info: 'Note' };
+
+/**
+ * toast(message, type?)  type: success (default) | error | warning | info
+ * toast({ title, message, type, duration })
+ */
+export function toast(message, type = 'success') {
+  const opts = typeof message === 'object' && message !== null && !(message instanceof Node)
+    ? message : { message, type };
+  const kind = opts.type || 'success';
+  const duration = opts.duration ?? (kind === 'error' ? 7000 : 4000);
   const host = document.getElementById('toasts');
+  const dismiss = () => {
+    if (el.classList.contains('leaving')) return;
+    el.classList.add('leaving');
+    setTimeout(() => el.remove(), 260);
+  };
+  const bar = h('div', { class: 'toast-bar', style: { animationDuration: `${duration}ms` } });
+  const el = h('div', { class: `toast ${kind}`, role: kind === 'error' ? 'alert' : 'status' },
+    h('div', { class: 'toast-icon' }, icon(TOAST_ICON[kind] || 'info')),
+    h('div', {}, h('div', { class: 'toast-title' }, opts.title || TOAST_TITLE[kind]),
+      opts.message ? h('div', { class: 'toast-msg' }, opts.message) : null),
+    h('button', { class: 'toast-close', 'aria-label': 'Dismiss', onclick: dismiss }, icon('x')),
+    bar);
+  bar.addEventListener('animationend', dismiss);
   host.append(el);
-  while (host.children.length > 3) host.firstElementChild.remove();
-  setTimeout(() => el.remove(), type === 'error' ? 6000 : 3500);
+  while (host.children.length > 4) host.firstElementChild.remove();
+  return dismiss;
 }
 
 export function toastError(err) { toast(errorMessage(err), 'error'); }
 
-/** Run an async action with a busy button; shows errors as toasts. */
+export function spinner(large = false) { return h('span', { class: `spinner${large ? ' lg' : ''}`, 'aria-hidden': 'true' }); }
+
+/** Run an async action with a busy button (spinner inside); shows errors as toasts. */
 export async function busy(button, fn) {
-  const label = button ? [...button.childNodes] : null;
-  if (button) { button.disabled = true; }
+  let spin;
+  if (button) {
+    button.disabled = true;
+    button.classList.add('is-loading');
+    spin = spinner();
+    button.append(spin);
+  }
   try {
     return await fn();
   } catch (err) {
     toastError(err);
     return undefined;
   } finally {
-    if (button) { button.disabled = false; button.replaceChildren(...label); }
+    if (button) {
+      button.disabled = false;
+      button.classList.remove('is-loading');
+      spin?.remove();
+    }
   }
 }
 
@@ -199,6 +250,10 @@ export function relTime(value) {
   return fmtDate(value);
 }
 
+export function initials(name) {
+  return (name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('') || '?';
+}
+
 const STATUS_TONE = {
   active: 'good', sent: 'good', completed: 'good', opened: 'good', clicked: 'good', delivered: 'good',
   sending: 'info', scheduled: 'info', pending: 'info',
@@ -213,12 +268,21 @@ export function badge(status) {
 /**
  * columns: [{ label, render(row) | key, class }]
  */
-export function table(columns, rows, { onRowClick, empty = 'Nothing here yet.' } = {}) {
-  if (!rows.length) return h('div', { class: 'empty' }, empty);
+/** Friendly empty state: emptyState('users', 'No subscribers yet', 'Add one or import a CSV.', button) */
+export function emptyState(iconName, title, text, action) {
+  return h('div', { class: 'empty' },
+    h('div', { class: 'empty-icon' }, icon(iconName || 'inbox')),
+    title ? h('strong', {}, title) : null,
+    text ? h('div', {}, text) : null,
+    action || null);
+}
+
+export function table(columns, rows, { onRowClick, empty = 'Nothing here yet.', rowClass } = {}) {
+  if (!rows.length) return typeof empty === 'string' ? emptyState('inbox', null, empty) : h('div', { class: 'empty' }, empty);
   return h('div', { class: 'table-wrap' }, h('table', {},
     h('thead', {}, h('tr', {}, columns.map((c) => h('th', { class: c.class }, c.label)))),
     h('tbody', {}, rows.map((row) => h('tr', {
-      class: onRowClick ? 'clickable' : null,
+      class: [onRowClick ? 'clickable' : '', rowClass ? rowClass(row) : ''].join(' ').trim() || null,
       onclick: onRowClick ? (e) => { if (!e.target.closest('button, a, input, select')) onRowClick(row); } : null,
     }, columns.map((c) => h('td', { class: c.class }, c.render ? c.render(row) : (row[c.key] ?? '—'))))))));
 }
@@ -234,9 +298,10 @@ export function pager(data, onPage) {
       h('button', { class: 'sm', disabled: data.page >= data.pages, onclick: () => onPage(data.page + 1) }, 'Next')));
 }
 
-export function tile(label, value, hint, meter) {
+export function tile(label, value, hint, meter, iconName) {
   return h('div', { class: 'tile' },
-    h('div', { class: 'label' }, label),
+    h('div', { class: 'tile-top' }, h('div', { class: 'label' }, label),
+      iconName ? h('div', { class: 'tile-icon' }, icon(iconName)) : null),
     h('div', { class: 'value' }, value),
     hint ? h('div', { class: 'hint' }, hint) : null,
     meter !== undefined ? h('div', { class: 'meter', role: 'meter', 'aria-valuenow': Math.round(meter), 'aria-valuemin': 0, 'aria-valuemax': 100 },
@@ -250,7 +315,23 @@ export function pageHead(title, sub, actions = [], crumbs) {
     h('div', { class: 'row' }, actions));
 }
 
-export function loading() { return h('div', { class: 'empty' }, 'Loading…'); }
+/** Shimmering placeholder rows while data loads. */
+export function loading(rows = 6) {
+  const widths = ['70%', '55%', '40%', '30%'];
+  return h('div', { class: 'skeleton-rows', 'aria-busy': 'true', 'aria-label': 'Loading' },
+    Array.from({ length: rows }, (_, r) => h('div', { class: 'skeleton-row' },
+      widths.map((w, i) => h('div', { class: 'skeleton', style: { width: i === 0 ? `${60 + ((r * 13) % 35)}%` : w } })))));
+}
+
+export function loadingTiles(n = 6) {
+  return h('div', { class: 'skeleton-tiles' }, Array.from({ length: n }, () => h('div', { class: 'skeleton' })));
+}
+
+/** Removable chip for an active filter. */
+export function filterChip(label, onRemove) {
+  return h('span', { class: 'filter-chip' }, label,
+    h('button', { type: 'button', 'aria-label': `Remove filter ${label}`, onclick: onRemove }, icon('x')));
+}
 
 export async function copyText(text) {
   try {

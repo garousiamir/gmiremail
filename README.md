@@ -24,16 +24,16 @@ The dashboard is a single page served by the same Flask app, from `app/static/da
 
 | Page | What you can do |
 |---|---|
-| **Overview** | Stat tiles, daily sent/opens/clicks chart, subscriber growth, opens by hour, recent campaigns |
-| **Subscribers** | Search and filter by status, tag or segment; add and edit (tags, custom fields); per-subscriber activity; CSV import and export |
-| **Segments** | Visual rule builder with a live match count and sample; JSON mode for nested groups |
+| **Overview** | Stat tiles, daily sent/opens/clicks chart, subscriber growth, opens by hour, recent campaigns, for any period (presets or a custom date range) |
+| **Subscribers** | Filter by search, status, tag, segment, **subscribed date range**, engagement score and any custom rule; filter chips; select rows or **all matching**, then bulk add/remove tag, change status, delete, or **create a campaign for them**; save the filters as a segment; add and edit, per-subscriber activity, CSV import and export |
+| **Segments** | Visual rule builder with a live match count and sample, including date ranges ("subscribed between") and "not in the last N days"; JSON mode for nested groups |
 | **Templates** | HTML editor with live preview (HTML and plain text), variable snippets, starter library |
-| **Campaigns** | Create, A/B subjects, send a test, send now, schedule, pause/resume; live stats, top links, A/B results; **retry failed**, **reset & resend** (after an SMTP problem) and **duplicate** |
+| **Campaigns** | Filter by status, name/subject and date. **Audience builder**: everyone, or any mix of segments, tags, hand-picked people and a custom filter, with segment/tag exclusions and a live recipient count. Create, A/B subjects, send a test, send now, schedule, pause/resume; live stats, top links, A/B results; **retry failed**, **reset & resend** (after an SMTP problem) and **duplicate** |
 | **Automations** | Workflow builder (send, wait, if/else, tags, fields, unsubscribe) with branching; per-subscriber run history |
-| **Email logs** | Every queued or sent email, filterable by status, campaign and recipient |
+| **Email logs** | Every queued or sent email, filterable by status, campaign, recipient, subject and date range |
 | **Settings** | Sender identity, SMTP (with connection test), API key copy/rotate, password, sign out everywhere, **download a full backup** (server owner) |
 
-It follows the system light/dark theme and works on phones. Charts have hover tooltips and a "Show as table" view.
+It follows the system light/dark theme and works on phones. Charts have hover tooltips and a "Show as table" view. Requests show a top progress bar, buttons show a spinner while they work, pages show skeletons while loading, and notifications are toasts with a title, icon and timer.
 
 Run the tests (in-memory SQLite by default; set `TEST_DATABASE_URL` to use PostgreSQL):
 
@@ -97,8 +97,16 @@ Every endpoint listed in `docs/QUICK_REFERENCE.md` is implemented. These were ad
 | `GET /health` | Liveness check |
 | `POST /api/templates/render` | Render unsaved template content (editor preview) |
 | `GET /api/subscribers/fields` | Custom field keys and tags in use (segment builder) |
+| `POST /api/subscribers/query` | Paginated search with every filter in a JSON body (see below) |
+| `POST /api/subscribers/bulk-action` | `{"action": "add_tag"/"remove_tag"/"set_status"/"delete", "value", "ids": [...]}` or `"filters": {...}` for everyone matching |
+| `POST /api/campaigns/audience/preview` | Recipient count + sample for an unsaved audience |
 
-List endpoints take `?page=&per_page=` (max 100). Errors come back as `{"error": "...", "details": ...}` with a matching HTTP status.
+List endpoints take `?page=&per_page=` (max 100). Dates (`date_from`, `date_to`, `subscribed_from`, ...) are `YYYY-MM-DD` or ISO datetimes; a plain `date_to` includes that whole day.
+
+- **Subscribers** (`GET /api/subscribers` or the `query` body): `search`, `status`, `tag`, `segment_id`, `subscribed_from/to`, `created_from/to`, `engagement_min/max`, `rules` (segment-format rules; JSON in the query string).
+- **Campaigns:** `status`, `search` (name or subject), `date_from/to` (send, scheduled or created date).
+- **Email logs:** `status`, `campaign_id`, `email`, `subject`, `date_from/to`.
+- **Analytics** (`engagement`, `subscriber-growth`): `days`, or `date_from/to`. Errors come back as `{"error": "...", "details": ...}` with a matching HTTP status.
 
 ### Segment rules
 
@@ -113,9 +121,21 @@ List endpoints take `?page=&per_page=` (max 100). Errors come back as `{"error":
 ```
 
 - **Fields:** subscriber columns, `tags`, `custom_fields.<key>` (an unknown field name is also treated as a custom field), and campaign history (`campaign_received`, `campaign_opened` or `campaign_clicked` combined with `equals` a campaign id).
-- **Operators:** `equals`, `not_equals`, `contains`, `not_contains`, `starts_with`, `ends_with`, `greater_than`, `less_than`, `greater_or_equal`, `less_or_equal`, `in`, `not_in`, `is_set`, `is_not_set`, `before`, `after`, `within_last_days`.
+- **Operators:** `equals`, `not_equals`, `contains`, `not_contains`, `starts_with`, `ends_with`, `greater_than`, `less_than`, `greater_or_equal`, `less_or_equal`, `in`, `not_in`, `is_set`, `is_not_set`, `before`, `after`, `within_last_days`, `not_within_last_days`, `between` (value `[from, to]`; either end may be empty; works for dates and numbers).
 
 Campaigns only ever send to `active` subscribers, whatever the rules say.
+
+### Campaign audiences
+
+Instead of a single `segment_id`, a campaign can take an `audience`. People matching **any** include group receive it; anyone in an exclude group is dropped. With no include group it goes to all active subscribers.
+
+```json
+{"audience": {
+  "segment_ids": ["..."], "tags": ["vip"], "subscriber_ids": ["..."],
+  "rules": {"logic": "AND", "rules": [{"field": "subscribed_at", "operator": "between", "value": ["2026-09-01", "2026-09-30"]}]},
+  "exclude_segment_ids": ["..."], "exclude_tags": ["do-not-mail"]
+}}
+```
 
 ### Automation workflows
 

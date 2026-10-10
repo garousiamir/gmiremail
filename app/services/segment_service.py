@@ -31,7 +31,7 @@ from app.utils.helpers import NotFoundError, ServiceError, parse_datetime, utcno
 
 CAMPAIGN_HISTORY_FIELDS = {'campaign_received', 'campaign_opened', 'campaign_clicked'}
 NUMERIC_OPERATORS = {'greater_than', 'less_than', 'greater_or_equal', 'less_or_equal'}
-DATE_OPERATORS = {'before', 'after', 'within_last_days'}
+DATE_OPERATORS = {'before', 'after', 'within_last_days', 'not_within_last_days'}
 MAX_RULE_DEPTH = 5
 
 
@@ -64,7 +64,11 @@ def validate_filter_rules(filter_rules, depth=0):
             raise ServiceError(f'Rule on "{field}" needs a "value"')
         if operator in ('in', 'not_in') and not isinstance(rule.get('value'), list):
             raise ServiceError(f'Operator "{operator}" needs a list value')
-        if operator == 'within_last_days':
+        if operator == 'between':
+            value = rule.get('value')
+            if not isinstance(value, list) or len(value) != 2 or all(v in (None, '') for v in value):
+                raise ServiceError(f'"between" on "{field}" needs [from, to] (either may be empty)')
+        if operator in ('within_last_days', 'not_within_last_days'):
             _to_number(rule.get('value'), field)
         if field in CAMPAIGN_HISTORY_FIELDS and operator not in ('equals', 'not_equals'):
             raise ServiceError(f'"{field}" only supports equals / not_equals')
@@ -118,6 +122,14 @@ def _rule_condition(rule):
     if operator in ('is_set', 'is_not_set'):
         condition = and_(element.as_string().isnot(None), element.as_string() != '')
         return condition if operator == 'is_set' else not_(condition)
+    if operator == 'between':
+        low, high = rule.get('value') or [None, None]
+        probe = low if low not in (None, '') else high
+        try:
+            float(probe)
+            return _compare(element.as_float(), operator, value, field, is_numeric=True)
+        except (TypeError, ValueError):
+            return _compare(element.as_string(), operator, value, field, is_date=True, date_as_string=True)
     if operator in NUMERIC_OPERATORS or (operator in ('equals', 'not_equals') and
                                          isinstance(value, (int, float)) and not isinstance(value, bool)):
         return _compare(element.as_float(), operator, value, field, is_numeric=True)
@@ -135,11 +147,34 @@ def _compare(column, operator, value, field, is_date=False, is_numeric=False, da
     if operator == 'is_not_set':
         return column.is_(None)
 
+    if operator == 'between':
+        low, high = value
+        parts = []
+        if is_date:
+            if low not in (None, ''):
+                start = parse_datetime(low)
+                parts.append(column >= (start.isoformat() if date_as_string else start))
+            if high not in (None, ''):
+                end = parse_datetime(high)
+                if isinstance(high, str) and len(high.strip()) == 10:
+                    end += timedelta(days=1)  # a plain date includes that whole day
+                    parts.append(column < (end.isoformat() if date_as_string else end))
+                else:
+                    parts.append(column <= (end.isoformat() if date_as_string else end))
+        else:
+            if low not in (None, ''):
+                parts.append(column >= (_to_number(low, field) if is_numeric else low))
+            if high not in (None, ''):
+                parts.append(column <= (_to_number(high, field) if is_numeric else high))
+        return and_(*parts) if parts else true()
+
     if is_date:
-        if operator == 'within_last_days':
+        if operator in ('within_last_days', 'not_within_last_days'):
             threshold = utcnow() - timedelta(days=_to_number(value, field))
             threshold_value = threshold.isoformat() if date_as_string else threshold
-            return column >= threshold_value
+            if operator == 'within_last_days':
+                return column >= threshold_value
+            return column < threshold_value
         parsed = parse_datetime(value) if operator in ('before', 'after', 'equals', 'not_equals',
                                                         *NUMERIC_OPERATORS) else None
         if parsed is not None:

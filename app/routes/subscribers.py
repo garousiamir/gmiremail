@@ -7,8 +7,19 @@ from app.utils.helpers import ServiceError, get_json_body, get_pagination, pagin
 bp = Blueprint('subscribers', __name__, url_prefix='/api/subscribers')
 
 
+FILTER_KEYS = ('status', 'search', 'tag', 'segment_id', 'sort', 'subscribed_from', 'subscribed_to',
+               'created_from', 'created_to', 'engagement_min', 'engagement_max', 'rules')
+
+
 def _filters(source):
-    return {key: source.get(key) for key in ('status', 'search', 'tag', 'segment_id', 'sort') if source.get(key)}
+    filters = {key: source.get(key) for key in FILTER_KEYS if source.get(key) not in (None, '')}
+    if isinstance(filters.get('rules'), str):  # query-string form
+        import json
+        try:
+            filters['rules'] = json.loads(filters['rules'])
+        except ValueError:
+            raise ServiceError('rules must be JSON')
+    return filters
 
 
 @bp.post('')
@@ -58,6 +69,30 @@ def list_subscribers():
     page, per_page = get_pagination()
     query = subscriber_service.get_subscribers(request.business_id, _filters(request.args))
     return jsonify(paginate(query, page, per_page))
+
+
+@bp.post('/query')
+@require_auth
+def query_subscribers():
+    """List with every filter, including ad-hoc segment rules: {page, per_page, ...filters}."""
+    data = get_json_body()
+    try:
+        page = max(int(data.get('page', 1)), 1)
+        per_page = min(max(int(data.get('per_page', 25)), 1), 100)
+    except (TypeError, ValueError):
+        raise ServiceError('page and per_page must be integers')
+    query = subscriber_service.get_subscribers(request.business_id, _filters(data))
+    return jsonify(paginate(query, page, per_page))
+
+
+@bp.post('/bulk-action')
+@require_auth
+def bulk_action():
+    """{action: add_tag|remove_tag|set_status|delete, value, ids: [...] | filters: {...}}"""
+    data = get_json_body()
+    filters = _filters(data['filters']) if isinstance(data.get('filters'), dict) else None
+    return jsonify(subscriber_service.bulk_action(request.business_id, data.get('action'), data.get('value'),
+                                                  ids=data.get('ids'), filters=filters))
 
 
 @bp.get('/fields')

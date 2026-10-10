@@ -14,6 +14,7 @@ def create_campaign():
     campaign = campaign_service.create_campaign(
         request.business_id, data.get('template_id'), data.get('segment_id'), data.get('name'),
         subject_line=data.get('subject_line'), subject_variants=data.get('subject_variants'),
+        audience=data.get('audience'),
     )
     if data.get('scheduled_time'):
         campaign = campaign_service.schedule_campaign(request.business_id, campaign.id, data['scheduled_time'])
@@ -24,8 +25,18 @@ def create_campaign():
 @require_auth
 def list_campaigns():
     page, per_page = get_pagination()
-    query = campaign_service.list_campaigns(request.business_id, request.args.get('status'))
+    args = request.args
+    query = campaign_service.list_campaigns(request.business_id, args.get('status'), args.get('search'),
+                                            args.get('date_from'), args.get('date_to'))
     return jsonify(paginate(query, page, per_page))
+
+
+@bp.post('/audience/preview')
+@require_auth
+def audience_preview():
+    """How many active subscribers an audience reaches, with a sample."""
+    from app.services import audience_service
+    return jsonify(audience_service.preview(request.business_id, get_json_body().get('audience')))
 
 
 @bp.get('/<campaign_id>')

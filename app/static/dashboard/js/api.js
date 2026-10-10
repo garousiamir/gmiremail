@@ -56,7 +56,29 @@ async function refreshAccess() {
 export function onUnauthorized(handler) { unauthorizedHandler = handler; }
 let unauthorizedHandler = () => {};
 
-async function request(path, { method = 'GET', body, form, raw = false, auth = true } = {}, retry = true) {
+// Top progress bar: shown while any request is in flight (after a short delay,
+// so instant responses don't flash it).
+let inFlight = 0;
+let barTimer = null;
+function progress(delta) {
+  inFlight = Math.max(0, inFlight + delta);
+  const bar = document.getElementById('progress');
+  if (!bar) return;
+  clearTimeout(barTimer);
+  if (inFlight > 0) barTimer = setTimeout(() => bar.classList.add('active'), 120);
+  else bar.classList.remove('active');
+}
+
+async function request(path, options = {}, retry = true) {
+  progress(1);
+  try {
+    return await doRequest(path, options, retry);
+  } finally {
+    progress(-1);
+  }
+}
+
+async function doRequest(path, { method = 'GET', body, form, raw = false, auth = true } = {}, retry = true) {
   const headers = {};
   let payload;
   if (form) payload = form;
@@ -74,7 +96,7 @@ async function request(path, { method = 'GET', body, form, raw = false, auth = t
   }
 
   if (res.status === 401 && auth && retry && await refreshAccess()) {
-    return request(path, { method, body, form, raw, auth }, false);
+    return doRequest(path, { method, body, form, raw, auth }, false);
   }
   if (res.status === 401 && auth) {
     session.clear();

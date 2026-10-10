@@ -23,6 +23,9 @@ export function render(root) {
     const data = formData(form);
     for (const key of Object.keys(data)) if (data[key] === '' || data[key] === null) delete data[key];
     button.disabled = true;
+    button.classList.add('is-loading');
+    const spin = h('span', { class: 'spinner' });
+    button.append(spin);
     errorBox.textContent = '';
     try {
       session.set(await api.publicPost(path, data));
@@ -31,6 +34,8 @@ export function render(root) {
       errorBox.textContent = errorMessage(err);
     } finally {
       button.disabled = false;
+      button.classList.remove('is-loading');
+      spin.remove();
     }
   }
 
@@ -39,7 +44,7 @@ export function render(root) {
       field('Email', h('input', { name: 'email', type: 'email', required: true, autocomplete: 'username' })),
       field('Password', h('input', { name: 'password', type: 'password', required: true, autocomplete: 'current-password' })),
       errorBox,
-      h('button', { type: 'submit', class: 'primary', style: { justifyContent: 'center' } }, 'Sign in'));
+      h('button', { type: 'submit', class: 'primary', style: { width: '100%', minHeight: '44px' } }, 'Sign in'));
   }
 
   function registerForm() {
@@ -62,12 +67,26 @@ export function render(root) {
             field('SMTP password', h('input', { name: 'smtp_password', type: 'password', autocomplete: 'new-password' }))),
           h('label', { class: 'check' }, h('input', { name: 'smtp_tls', type: 'checkbox', checked: true }), 'Use STARTTLS (ignored for a relay on this server)'))),
       errorBox,
-      h('button', { type: 'submit', class: 'primary', style: { justifyContent: 'center' } }, 'Create account'));
+      h('button', { type: 'submit', class: 'primary', style: { width: '100%', minHeight: '44px' } }, 'Create account'));
   }
 
-  clear(root, h('div', { class: 'auth' }, h('div', { class: 'card' },
-    h('div', { class: 'brand' }, h('div', { class: 'brand-mark' }, h('span', { style: { color: '#fff', display: 'grid' } }, icon('mail'))), 'gmiremail'),
-    h('p', { class: 'muted', style: { textAlign: 'center' } }, 'Email marketing for your businesses'),
-    tabs, formHost)));
+  const feature = (iconName, text) => h('li', {}, h('span', { class: 'ic' }, icon(iconName)), text);
+  clear(root, h('div', { class: 'auth' },
+    h('section', { class: 'auth-hero' },
+      h('div', { class: 'brand', style: { padding: 0 } }, h('div', { class: 'brand-mark' }, icon('mail')), h('span', {}, 'gmiremail')),
+      h('div', {},
+        h('h1', {}, 'Email marketing that runs on your own server.'),
+        h('p', {}, 'Campaigns, automations and analytics for every brand you manage, with your data staying yours.'),
+        h('ul', {},
+          feature('target', 'Send to segments, tags or hand-picked people'),
+          feature('zap', 'Automations that welcome and re-engage subscribers'),
+          feature('overview', 'Opens, clicks and growth at a glance'),
+          feature('shield', 'Self-hosted, DKIM-signed, private by default'))),
+      h('div', { class: 'small', style: { color: 'rgba(255,255,255,.6)' } }, 'Self-hosted · Multi-brand · Open source')),
+    h('section', { class: 'auth-panel' }, h('div', { class: 'auth-card' },
+      h('div', { class: 'brand' }, h('div', { class: 'brand-mark' }, icon('mail')), h('span', {}, 'gmiremail')),
+      h('h2', {}, 'Welcome'),
+      h('p', { class: 'muted' }, 'Sign in to your workspace or create a new one.'),
+      tabs, formHost))));
   draw();
 }

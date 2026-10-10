@@ -1,21 +1,24 @@
 import { api } from '../api.js';
 import { columnChart, lineChart } from '../charts.js';
-import { badge, clear, compact, fmtNum, fmtPct, h, loading, navigate, pageHead, select, table, tile } from '../ui.js';
+import { badge, clear, compact, emptyState, fmtNum, fmtPct, h, icon, loadingTiles, loading, navigate, pageHead, table, tile } from '../ui.js';
+import { dateRange } from '../components/daterange.js';
 
 const shortDate = (iso) => new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 
 export async function render(main) {
-  let days = 30;
-  const body = h('div', {}, loading());
-  const range = select([{ value: 7, label: 'Last 7 days' }, { value: 30, label: 'Last 30 days' }, { value: 90, label: 'Last 90 days' }],
-    days, { 'aria-label': 'Date range', style: { width: 'auto' }, onchange: (e) => { days = Number(e.target.value); load(); } });
-  clear(main, pageHead('Overview', 'How your email program is doing', [range]), body);
+  const range = dateRange({ preset: '30', allowAll: false, label: 'Period', onChange: () => load() });
+  const body = h('div', {}, loadingTiles(7), h('div', { class: 'card' }, loading(5)));
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+  clear(main, pageHead(greeting, 'Here is how your email program is doing', [range.el]), body);
 
   async function load() {
+    const { from, to } = range.get();
+    const period = { date_from: from, date_to: to };
     const [overview, engagement, growth, comparison] = await Promise.all([
       api.get('/api/analytics/overview'),
-      api.get('/api/analytics/engagement', { days }),
-      api.get('/api/analytics/subscribers', { days }),
+      api.get('/api/analytics/engagement', period),
+      api.get('/api/analytics/subscribers', period),
       api.get('/api/analytics/campaigns', { limit: 5 }),
     ]);
     const e = overview.emails;
@@ -23,13 +26,13 @@ export async function render(main) {
 
     clear(body,
       h('div', { class: 'tiles' },
-        tile('Active subscribers', compact(overview.subscribers.active), `${fmtNum(overview.subscribers.total)} total`),
-        tile('Emails sent', compact(e.sent), e.queued ? `${fmtNum(e.queued)} queued` : 'All time'),
-        tile('Open rate', fmtPct(overview.open_rate), `${fmtNum(e.unique_opens)} unique opens`),
-        tile('Click rate', fmtPct(overview.click_rate), `${fmtPct(overview.click_to_open_rate)} of openers clicked`),
-        tile('Bounce rate', fmtPct(overview.bounce_rate), `${fmtNum(e.bounces)} bounces`),
-        tile('Unsubscribe rate', fmtPct(overview.unsubscribe_rate), `${fmtNum(e.unsubscribes)} unsubscribes`),
-        tile('Sent today', fmtNum(e.sent_today), `of ${fmtNum(e.daily_limit)} daily limit`, quota)),
+        tile('Active subscribers', compact(overview.subscribers.active), `${fmtNum(overview.subscribers.total)} total`, undefined, 'users'),
+        tile('Emails sent', compact(e.sent), e.queued ? `${fmtNum(e.queued)} queued` : 'All time', undefined, 'send'),
+        tile('Open rate', fmtPct(overview.open_rate), `${fmtNum(e.unique_opens)} unique opens`, undefined, 'eye'),
+        tile('Click rate', fmtPct(overview.click_rate), `${fmtPct(overview.click_to_open_rate)} of openers clicked`, undefined, 'click'),
+        tile('Bounce rate', fmtPct(overview.bounce_rate), `${fmtNum(e.bounces)} bounces`, undefined, 'bounce'),
+        tile('Unsubscribe rate', fmtPct(overview.unsubscribe_rate), `${fmtNum(e.unsubscribes)} unsubscribes`, undefined, 'userx'),
+        tile('Sent today', fmtNum(e.sent_today), `of ${fmtNum(e.daily_limit)} daily limit`, quota, 'gauge')),
 
       h('div', { class: 'card' },
         h('div', { class: 'card-head' }, h('div', {}, h('h2', {}, 'Engagement'),
@@ -66,8 +69,8 @@ export async function render(main) {
           { label: 'Click rate', class: 'num', render: (c) => fmtPct(c.click_rate) },
         ], comparison.campaigns, {
           onRowClick: (c) => navigate(`campaigns/${c.id}`),
-          empty: h('div', {}, 'No campaigns sent yet.', h('br'),
-            h('button', { class: 'primary', onclick: () => navigate('campaigns') }, 'Create a campaign')),
+          empty: emptyState('send', 'No campaigns sent yet', 'Your sent campaigns and their results will show up here.',
+            h('button', { class: 'primary', onclick: () => navigate('campaigns') }, icon('plus'), 'Create a campaign')),
         })));
   }
 

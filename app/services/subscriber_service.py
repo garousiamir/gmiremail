@@ -1,11 +1,12 @@
 import csv
 import io
+from datetime import timedelta
 
 from sqlalchemy import or_
 
 from app import db
 from app.models import AutomationInstance, Subscriber
-from app.utils.helpers import NotFoundError, ServiceError, rows_to_csv, utcnow
+from app.utils.helpers import NotFoundError, ServiceError, parse_datetime, rows_to_csv, utcnow
 from app.utils.validators import normalize_email, validate_dict, validate_subscriber_status
 
 STANDARD_IMPORT_FIELDS = {'email', 'first_name', 'last_name', 'status', 'tags', 'custom_fields'}
@@ -192,6 +193,23 @@ def get_subscribers(business_id, filters=None):
         from app.services.segment_service import get_segment, build_condition
         segment = get_segment(business_id, filters['segment_id'])
         query = query.filter(build_condition(segment.filter_rules))
+    if filters.get('rules'):
+        from app.services.segment_service import build_condition
+        query = query.filter(build_condition(filters['rules']))
+    for key, column in (('subscribed', Subscriber.subscribed_at), ('created', Subscriber.created_at)):
+        if filters.get(f'{key}_from'):
+            query = query.filter(column >= parse_datetime(filters[f'{key}_from']))
+        if filters.get(f'{key}_to'):
+            end = parse_datetime(filters[f'{key}_to'])
+            if len(str(filters[f'{key}_to']).strip()) == 10:
+                end += timedelta(days=1)  # plain date = include that whole day
+            query = query.filter(column < end)
+    for key, op in (('engagement_min', '__ge__'), ('engagement_max', '__le__')):
+        if filters.get(key) not in (None, ''):
+            try:
+                query = query.filter(getattr(Subscriber.engagement_score, op)(float(filters[key])))
+            except (TypeError, ValueError):
+                raise ServiceError(f'{key} must be a number')
     sort = filters.get('sort', '-created_at')
     column = getattr(Subscriber, sort.lstrip('-'), None)
     if column is None or sort.lstrip('-') not in ('created_at', 'email', 'engagement_score', 'subscribed_at'):
@@ -274,6 +292,56 @@ def delete_subscriber(business_id, subscriber_id):
     subscriber = get_subscriber(business_id, subscriber_id)
     db.session.delete(subscriber)
     db.session.commit()
+
+
+BULK_ACTIONS = {'add_tag', 'remove_tag', 'set_status', 'delete'}
+MAX_BULK_IDS = 50000
+
+
+def resolve_selection(business_id, ids=None, filters=None):
+    """Subscribers chosen in the UI: explicit ids, or everyone matching filters."""
+    query = Subscriber.query.filter(Subscriber.business_id == business_id)
+    if ids is not None:
+        if not isinstance(ids, list) or len(ids) > MAX_BULK_IDS:
+            raise ServiceError(f'ids must be a list of at most {MAX_BULK_IDS} subscriber ids')
+        return query.filter(Subscriber.id.in_(ids))
+    if filters is None:
+        raise ServiceError('Provide "ids" or "filters"')
+    return get_subscribers(business_id, filters).order_by(None)
+
+
+def bulk_action(business_id, action, value=None, ids=None, filters=None):
+    if action not in BULK_ACTIONS:
+        raise ServiceError(f'Unknown action: {action}', details={'allowed': sorted(BULK_ACTIONS)})
+    if action in ('add_tag', 'remove_tag'):
+        tags = _clean_tags(value if isinstance(value, list) else [value] if value else [])
+        if not tags:
+            raise ServiceError('A tag is required')
+    if action == 'set_status':
+        validate_subscriber_status(value)
+
+    affected = 0
+    selection = resolve_selection(business_id, ids, filters)
+    if action == 'delete':
+        for subscriber in selection.all():
+            db.session.delete(subscriber)
+            affected += 1
+        db.session.commit()
+        return {'action': action, 'affected': affected}
+
+    for subscriber in selection.all():
+        current = set(subscriber.tags or [])
+        if action == 'add_tag' and not set(tags) <= current:
+            subscriber.tags = sorted(current | set(tags))
+            affected += 1
+        elif action == 'remove_tag' and current & set(tags):
+            subscriber.tags = sorted(current - set(tags))
+            affected += 1
+        elif action == 'set_status' and subscriber.status != value:
+            _apply_status(subscriber, value)
+            affected += 1
+    db.session.commit()
+    return {'action': action, 'affected': affected}
 
 
 def export_subscribers(business_id, filters=None, format='csv'):

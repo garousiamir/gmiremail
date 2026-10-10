@@ -1,11 +1,11 @@
 from collections import OrderedDict
-from datetime import timedelta
+from datetime import datetime, time, timedelta
 
 from sqlalchemy import func, or_
 
 from app import db
 from app.models import Automation, Campaign, EmailEvent, EmailLog, Subscriber
-from app.utils.helpers import NotFoundError, ServiceError, percentage, utcnow
+from app.utils.helpers import NotFoundError, ServiceError, parse_datetime, percentage, utcnow
 
 ENGAGEMENT_WINDOW_DAYS = 90
 
@@ -77,29 +77,46 @@ def get_business_overview(business_id):
     }
 
 
-def _date_series(days):
-    today = utcnow().date()
-    return OrderedDict(((today - timedelta(days=offset)).isoformat(), None) for offset in range(days - 1, -1, -1))
+def _date_series(days, end_date=None):
+    end = end_date or utcnow().date()
+    return OrderedDict(((end - timedelta(days=offset)).isoformat(), None) for offset in range(days - 1, -1, -1))
 
 
-def get_engagement_metrics(business_id, days=30):
+def resolve_range(days=30, date_from=None, date_to=None):
+    """(since, until, days, end_date) for a preset ("last N days") or a custom from/to range."""
+    if date_from or date_to:
+        end_date = parse_datetime(date_to).date() if date_to else utcnow().date()
+        start_date = parse_datetime(date_from).date() if date_from else end_date - timedelta(days=29)
+        if start_date > end_date:
+            raise ServiceError('date_from must be before date_to')
+        days = min((end_date - start_date).days + 1, 731)
+        start_date = end_date - timedelta(days=days - 1)
+        since = datetime.combine(start_date, time.min)
+        until = datetime.combine(end_date + timedelta(days=1), time.min)
+        return since, until, days, end_date
     days = _window(days)
-    since = utcnow() - timedelta(days=days)
-    sent, opens, clicks, bounces = _log_totals(EmailLog.business_id == business_id, EmailLog.sent_at >= since)
+    return utcnow() - timedelta(days=days), None, days, None
+
+
+def get_engagement_metrics(business_id, days=30, date_from=None, date_to=None):
+    since, until, days, end_date = resolve_range(days, date_from, date_to)
+    until = until or utcnow() + timedelta(days=1)
+    sent, opens, clicks, bounces = _log_totals(EmailLog.business_id == business_id, EmailLog.sent_at >= since,
+                                               EmailLog.sent_at < until)
     unsubscribes = EmailEvent.query.filter(EmailEvent.business_id == business_id,
                                            EmailEvent.event_type == 'unsubscribe',
-                                           EmailEvent.created_at >= since).count()
+                                           EmailEvent.created_at >= since, EmailEvent.created_at < until).count()
 
-    series = _date_series(days)
+    series = _date_series(days, end_date)
     for key in series:
         series[key] = {'date': key, 'sent': 0, 'opens': 0, 'clicks': 0}
     for sent_at, in db.session.query(EmailLog.sent_at).filter(EmailLog.business_id == business_id,
-                                                              EmailLog.sent_at >= since):
+                                                              EmailLog.sent_at >= since, EmailLog.sent_at < until):
         bucket = series.get(sent_at.date().isoformat())
         if bucket:
             bucket['sent'] += 1
     events = db.session.query(EmailEvent.event_type, EmailEvent.created_at).filter(
-        EmailEvent.business_id == business_id, EmailEvent.created_at >= since,
+        EmailEvent.business_id == business_id, EmailEvent.created_at >= since, EmailEvent.created_at < until,
         EmailEvent.event_type.in_(['open', 'click']))
     for event_type, created_at in events:
         bucket = series.get(created_at.date().isoformat())
@@ -117,7 +134,7 @@ def get_engagement_metrics(business_id, days=30):
     hourly = [0] * 24
     for (created_at,) in db.session.query(EmailEvent.created_at).filter(
             EmailEvent.business_id == business_id, EmailEvent.event_type == 'open',
-            EmailEvent.created_at >= since):
+            EmailEvent.created_at >= since, EmailEvent.created_at < until):
         hourly[created_at.hour] += 1
 
     return {
@@ -131,22 +148,23 @@ def get_engagement_metrics(business_id, days=30):
     }
 
 
-def get_subscriber_growth(business_id, days=30):
-    days = _window(days)
-    since = utcnow() - timedelta(days=days)
-    series = _date_series(days)
+def get_subscriber_growth(business_id, days=30, date_from=None, date_to=None):
+    since, until, days, end_date = resolve_range(days, date_from, date_to)
+    until = until or utcnow() + timedelta(days=1)
+    series = _date_series(days, end_date)
     for key in series:
         series[key] = {'date': key, 'new_subscribers': 0, 'unsubscribes': 0, 'total': 0}
 
     base_total = Subscriber.query.filter(Subscriber.business_id == business_id,
                                          Subscriber.created_at < since).count()
     for (created_at,) in db.session.query(Subscriber.created_at).filter(
-            Subscriber.business_id == business_id, Subscriber.created_at >= since):
+            Subscriber.business_id == business_id, Subscriber.created_at >= since, Subscriber.created_at < until):
         bucket = series.get(created_at.date().isoformat())
         if bucket:
             bucket['new_subscribers'] += 1
     for (unsub_at,) in db.session.query(Subscriber.unsubscribed_at).filter(
-            Subscriber.business_id == business_id, Subscriber.unsubscribed_at >= since):
+            Subscriber.business_id == business_id, Subscriber.unsubscribed_at >= since,
+            Subscriber.unsubscribed_at < until):
         bucket = series.get(unsub_at.date().isoformat())
         if bucket:
             bucket['unsubscribes'] += 1
@@ -192,6 +210,15 @@ def email_logs_query(business_id, filters):
             query = query.filter(getattr(EmailLog, field) == filters[field])
     if filters.get('email'):
         query = query.filter(EmailLog.recipient_email.ilike(f"%{filters['email']}%"))
+    if filters.get('subject'):
+        query = query.filter(EmailLog.subject_line.ilike(f"%{filters['subject']}%"))
+    if filters.get('date_from'):
+        query = query.filter(EmailLog.created_at >= parse_datetime(filters['date_from']))
+    if filters.get('date_to'):
+        end = parse_datetime(filters['date_to'])
+        if len(str(filters['date_to']).strip()) == 10:
+            end += timedelta(days=1)
+        query = query.filter(EmailLog.created_at < end)
     return query.order_by(EmailLog.created_at.desc())
 
 

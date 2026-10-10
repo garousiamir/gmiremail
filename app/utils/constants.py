@@ -21,6 +21,7 @@ SEGMENT_OPERATORS = {
     'equals', 'not_equals', 'contains', 'not_contains', 'starts_with', 'ends_with',
     'greater_than', 'less_than', 'greater_or_equal', 'less_or_equal',
     'in', 'not_in', 'is_set', 'is_not_set', 'before', 'after', 'within_last_days',
+    'not_within_last_days', 'between',
 }
 SEGMENT_LOGIC = {'AND', 'OR'}
 

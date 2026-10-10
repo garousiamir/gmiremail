@@ -1,59 +1,233 @@
 import { api } from '../api.js';
 import {
-  badge, busy, clear, confirmDialog, debounce, field, fmtDate, fmtNum, fmtPct, h, icon, loading, modal,
-  pageHead, pager, relTime, select, table, toast, toastError,
+  badge, busy, clear, confirmDialog, debounce, emptyState, field, filterChip, fmtDate, fmtNum, fmtPct, h, icon, loading,
+  modal, navigate, pageHead, pager, relTime, select, table, toast, toastError,
 } from '../ui.js';
+import { dateRange } from '../components/daterange.js';
+import { loadRuleContext, parseValue, ruleBuilder, STATUSES } from '../components/rules.js';
 
-const STATUSES = ['active', 'inactive', 'bounced', 'unsubscribed'];
+export { parseValue };
 
 export async function render(main) {
-  const state = { page: 1, search: '', status: '', tag: '', segment_id: '' };
+  const state = { page: 1, search: '', status: '', tag: '', segment_id: '', subscribed: { from: '', to: '' },
+    engagement_min: '', engagement_max: '', rules: null };
+  const selected = new Map(); // id -> email
+  let allMatching = false;
+  let lastData = null;
+
+  const [segments, context] = await Promise.all([
+    api.get('/api/segments', { per_page: 100 }).then((d) => d.items),
+    loadRuleContext(),
+  ]);
+
   const listHost = h('div', {}, loading());
-  const segments = (await api.get('/api/segments', { per_page: 100 })).items;
-  const fields = await api.get('/api/subscribers/fields');
+  const chipsHost = h('div', { class: 'filter-chips' });
+  const bannerHost = h('div');
+  const bulkHost = h('div');
 
   const search = h('input', { type: 'search', placeholder: 'Search email or name', 'aria-label': 'Search subscribers',
-    oninput: debounce((e) => { state.search = e.target.value.trim(); state.page = 1; load(); }) });
-  const statusFilter = select([{ value: '', label: 'Any status' }, ...STATUSES], '', {
-    'aria-label': 'Status', onchange: (e) => { state.status = e.target.value; state.page = 1; load(); } });
-  const tagFilter = fields.tags.length ? select([{ value: '', label: 'Any tag' }, ...fields.tags], '', {
-    'aria-label': 'Tag', onchange: (e) => { state.tag = e.target.value; state.page = 1; load(); } }) : null;
-  const segmentFilter = segments.length ? select([{ value: '', label: 'Any segment' },
-    ...segments.map((s) => ({ value: s.id, label: s.name }))], '', {
-    'aria-label': 'Segment', onchange: (e) => { state.segment_id = e.target.value; state.page = 1; load(); } }) : null;
+    oninput: debounce(() => { state.search = search.value.trim(); reset(); }) });
+  const statusSel = select([{ value: '', label: 'Any status' }, ...STATUSES], '', {
+    'aria-label': 'Status', onchange: (e) => { state.status = e.target.value; reset(); } });
+  const tagSel = select([{ value: '', label: 'Any tag' }, ...context.tags], '', {
+    'aria-label': 'Tag', onchange: (e) => { state.tag = e.target.value; reset(); } });
+  const segSel = select([{ value: '', label: 'Any segment' }, ...segments.map((sg) => ({ value: sg.id, label: sg.name }))], '', {
+    'aria-label': 'Segment', onchange: (e) => { state.segment_id = e.target.value; reset(); } });
+  const subscribedRange = dateRange({ label: 'Subscribed date', onChange: (r) => { state.subscribed = r; reset(); } });
+
+  // Advanced filter panel
+  const engMin = h('input', { type: 'number', min: 0, max: 100, placeholder: 'min', 'aria-label': 'Engagement from', style: { width: '90px' } });
+  const engMax = h('input', { type: 'number', min: 0, max: 100, placeholder: 'max', 'aria-label': 'Engagement to', style: { width: '90px' } });
+  const builder = ruleBuilder({ rules: null, context, intro: 'Also require', allowJson: false, onChange: () => {} });
+  const panel = h('div', { class: 'filter-panel', hidden: true },
+    h('div', { class: 'row', style: { marginBottom: '14px' } }, h('strong', {}, 'Engagement score'), engMin, h('span', { class: 'muted' }, 'to'), engMax),
+    builder.el,
+    h('div', { class: 'row', style: { marginTop: '14px', justifyContent: 'flex-end' } },
+      h('button', { type: 'button', class: 'ghost sm', onclick: () => { engMin.value = ''; engMax.value = ''; builder.set(null); applyAdvanced(); } }, 'Clear'),
+      h('button', { type: 'button', class: 'primary sm', onclick: () => applyAdvanced() }, 'Apply filters')));
+  const moreBtn = h('button', { onclick: () => { panel.hidden = !panel.hidden; } }, icon('sliders'), 'More filters');
+  function applyAdvanced() {
+    state.engagement_min = engMin.value;
+    state.engagement_max = engMax.value;
+    state.rules = builder.isEmpty() ? null : builder.get();
+    reset();
+  }
 
   const exportBtn = h('button', { onclick: () => busy(exportBtn, () => api.download('/api/subscribers/export',
-    { status: state.status, search: state.search, tag: state.tag, segment_id: state.segment_id },
-    `subscribers-${new Date().toISOString().slice(0, 10)}.csv`)) }, icon('download'), 'Export CSV');
+    filterBody(), `subscribers-${new Date().toISOString().slice(0, 10)}.csv`)) }, icon('download'), 'Export');
 
   clear(main,
-    pageHead('Subscribers', 'Everyone on your list', [
+    pageHead('Subscribers', 'Everyone on your list. Filter, select and act on groups of people.', [
       h('button', { onclick: () => importDialog(load) }, icon('upload'), 'Import CSV'),
       exportBtn,
       h('button', { class: 'primary', onclick: () => editDialog(null, load) }, icon('plus'), 'Add subscriber'),
     ]),
-    h('div', { class: 'card' }, h('div', { class: 'toolbar' }, search, statusFilter, tagFilter, segmentFilter), listHost));
+    h('div', { class: 'card' },
+      h('div', { class: 'toolbar' }, search, statusSel, context.tags.length ? tagSel : null, segments.length ? segSel : null,
+        subscribedRange.el, moreBtn, h('span', { class: 'grow' }),
+        h('button', { class: 'ghost sm', title: 'Save these filters as a segment', onclick: saveAsSegment }, icon('filter'), 'Save as segment')),
+      panel, chipsHost, bannerHost, listHost),
+    bulkHost);
 
-  async function load() {
-    const data = await api.get('/api/subscribers', { ...state, per_page: 25 });
+  function filterBody() {
+    const body = {};
+    for (const key of ['search', 'status', 'tag', 'segment_id', 'engagement_min', 'engagement_max']) if (state[key] !== '') body[key] = state[key];
+    if (state.subscribed.from) body.subscribed_from = state.subscribed.from;
+    if (state.subscribed.to) body.subscribed_to = state.subscribed.to;
+    if (state.rules) body.rules = state.rules;
+    return body;
+  }
+
+  function activeFilters() {
+    const out = [];
+    if (state.search) out.push([`Search: ${state.search}`, () => { search.value = ''; state.search = ''; }]);
+    if (state.status) out.push([`Status: ${state.status}`, () => { statusSel.value = ''; state.status = ''; }]);
+    if (state.tag) out.push([`Tag: ${state.tag}`, () => { tagSel.value = ''; state.tag = ''; }]);
+    if (state.segment_id) out.push([`Segment: ${segments.find((x) => x.id === state.segment_id)?.name}`, () => { segSel.value = ''; state.segment_id = ''; }]);
+    if (state.subscribed.from || state.subscribed.to) {
+      out.push([`Subscribed: ${subscribedRange.describe()}`, () => { subscribedRange.reset(); state.subscribed = { from: '', to: '' }; }]);
+    }
+    if (state.engagement_min !== '' || state.engagement_max !== '') {
+      out.push([`Engagement ${state.engagement_min || 0}–${state.engagement_max || 100}`, () => { engMin.value = engMax.value = ''; state.engagement_min = state.engagement_max = ''; }]);
+    }
+    if (state.rules) out.push([`${state.rules.rules.length} custom rule${state.rules.rules.length > 1 ? 's' : ''}`, () => { builder.set(null); state.rules = null; }]);
+    return out;
+  }
+
+  function drawChips() {
+    const filters = activeFilters();
+    clear(chipsHost, filters.map(([label, remove]) => filterChip(label, () => { remove(); reset(); })),
+      filters.length > 1 ? h('button', { class: 'link-btn', onclick: () => { filters.forEach(([, remove]) => remove()); reset(); } }, 'Clear all') : null);
+  }
+
+  function reset() { state.page = 1; selected.clear(); allMatching = false; load(); }
+
+  function selectionCount() { return allMatching ? (lastData?.total || 0) : selected.size; }
+
+  function drawBulk() {
+    const n = selectionCount();
+    if (!n) { clear(bulkHost); return; }
+    const target = () => (allMatching ? { filters: filterBody() } : { ids: [...selected.keys()] });
+    const run = async (btn, action, value, verb) => busy(btn, async () => {
+      const r = await api.post('/api/subscribers/bulk-action', { action, value, ...target() });
+      toast({ title: verb, message: `${fmtNum(r.affected)} subscriber${r.affected === 1 ? '' : 's'} updated.` });
+      selected.clear(); allMatching = false; load();
+    });
+    const tagBtn = (action, label) => {
+      const b = h('button', { onclick: async () => {
+        const tag = prompt(action === 'add_tag' ? 'Tag to add' : 'Tag to remove');
+        if (tag && tag.trim()) run(b, action, tag.trim(), action === 'add_tag' ? 'Tag added' : 'Tag removed');
+      } }, icon('tag'), label);
+      return b;
+    };
+    const statusBtn = h('button', { onclick: () => {
+      const m = modal({ title: `Change status of ${fmtNum(n)} subscriber${n === 1 ? '' : 's'}`,
+        body: h('div', { class: 'tag-cloud' }, STATUSES.map((st) => h('button', { class: 'tag-toggle', onclick: () => {
+          m.close(); run(statusBtn, 'set_status', st, `Status set to ${st}`);
+        } }, st))) });
+    } }, 'Change status');
+    const deleteBtn = h('button', { class: 'danger', onclick: async () => {
+      if (!await confirmDialog(`Delete ${fmtNum(n)} subscriber${n === 1 ? '' : 's'}?`, 'They and their email history are removed permanently.',
+        { confirmLabel: 'Delete', danger: true })) return;
+      run(deleteBtn, 'delete', null, 'Deleted');
+    } }, icon('trash'), 'Delete');
+    const campaignBtn = h('button', { onclick: async () => {
+      const { campaignDialog } = await import('./campaigns.js');
+      const audience = allMatching ? audienceFromFilters() : { subscriber_ids: [...selected.keys()] };
+      campaignDialog(null, null, { audience, picked: Object.fromEntries(selected) });
+    } }, icon('send'), 'Create campaign');
+    clear(bulkHost, h('div', { class: 'bulk-bar', role: 'toolbar', 'aria-label': 'Bulk actions' },
+      h('strong', {}, `${fmtNum(n)} selected`),
+      campaignBtn, tagBtn('add_tag', 'Add tag'), tagBtn('remove_tag', 'Remove tag'), statusBtn, deleteBtn,
+      h('button', { class: 'icon', 'aria-label': 'Clear selection', onclick: () => { selected.clear(); allMatching = false; draw(); } }, icon('x'))));
+  }
+
+  /** Current filters as segment rules (for "Save as segment" / campaign audience). */
+  function filterRules() {
+    const rules = [];
+    if (state.status) rules.push({ field: 'status', operator: 'equals', value: state.status });
+    if (state.tag) rules.push({ field: 'tags', operator: 'contains', value: state.tag });
+    if (state.search) rules.push({ field: 'email', operator: 'contains', value: state.search });
+    if (state.subscribed.from || state.subscribed.to) rules.push({ field: 'subscribed_at', operator: 'between', value: [state.subscribed.from, state.subscribed.to] });
+    if (state.engagement_min !== '' || state.engagement_max !== '') rules.push({ field: 'engagement_score', operator: 'between', value: [state.engagement_min, state.engagement_max] });
+    if (state.rules) rules.push(...(state.rules.logic === 'OR' && state.rules.rules.length > 1 ? [state.rules] : state.rules.rules));
+    return { logic: 'AND', rules };
+  }
+  function audienceFromFilters() {
+    const out = {};
+    const rules = filterRules();
+    if (rules.rules.length) out.rules = rules;
+    if (state.segment_id) out.segment_ids = [state.segment_id];
+    if (!rules.rules.length && !state.segment_id) return null;
+    if (rules.rules.length && state.segment_id) {
+      // Both: people in the segment who also match the filters
+      out.rules = { logic: 'AND', rules: [...rules.rules, ...(segments.find((x) => x.id === state.segment_id)?.filter_rules?.rules || [])] };
+      delete out.segment_ids;
+    }
+    return out;
+  }
+
+  async function saveAsSegment() {
+    const rules = filterRules();
+    if (state.segment_id) rules.rules.push(...(segments.find((x) => x.id === state.segment_id)?.filter_rules?.rules || []));
+    if (!rules.rules.length) { toast({ type: 'info', title: 'Add a filter first', message: 'Filter the list, then save it as a segment.' }); return; }
+    const name = prompt('Name for the new segment');
+    if (!name || !name.trim()) return;
+    try {
+      const seg = await api.post('/api/segments', { name: name.trim(), filter_rules: rules });
+      toast({ title: 'Segment saved', message: `"${seg.name}" has ${fmtNum(seg.subscriber_count)} subscribers.` });
+      navigate(`segments/${seg.id}`);
+    } catch (err) { toastError(err); }
+  }
+
+  function draw() {
+    const data = lastData;
+    drawChips();
+    const pageIds = data.items.map((x) => x.id);
+    const allOnPage = pageIds.length && pageIds.every((id) => selected.has(id));
+    const headCheck = h('input', { type: 'checkbox', 'aria-label': 'Select all on this page', checked: allOnPage || allMatching,
+      onchange: (e) => {
+        allMatching = false;
+        data.items.forEach((x) => (e.target.checked ? selected.set(x.id, x.email) : selected.delete(x.id)));
+        draw();
+      } });
+    clear(bannerHost, (allOnPage || allMatching) && data.total > pageIds.length ? h('div', { class: 'select-banner' },
+      allMatching
+        ? [`All ${fmtNum(data.total)} matching subscribers are selected. `, h('button', { onclick: () => { allMatching = false; selected.clear(); draw(); } }, 'Clear selection')]
+        : [`${fmtNum(selected.size)} on this page selected. `, h('button', { onclick: () => { allMatching = true; draw(); } }, `Select all ${fmtNum(data.total)} matching`)]) : null);
+    const filtered = activeFilters().length > 0;
     clear(listHost,
       table([
-        { label: 'Email', render: (s) => h('strong', {}, s.email) },
-        { label: 'Name', render: (s) => [s.first_name, s.last_name].filter(Boolean).join(' ') || h('span', { class: 'muted' }, '—') },
-        { label: 'Status', render: (s) => badge(s.status) },
-        { label: 'Tags', render: (s) => s.tags.length ? s.tags.map((t) => h('span', { class: 'chip' }, t)) : h('span', { class: 'muted' }, '—') },
-        { label: 'Engagement', class: 'num', render: (s) => Math.round(s.engagement_score) },
-        { label: 'Added', render: (s) => h('span', { class: 'nowrap', title: fmtDate(s.created_at) }, relTime(s.created_at)) },
+        { label: headCheck, class: 'check', render: (x) => h('input', { type: 'checkbox', 'aria-label': `Select ${x.email}`,
+          checked: allMatching || selected.has(x.id), onchange: (e) => {
+            if (allMatching) { allMatching = false; data.items.forEach((y) => selected.set(y.id, y.email)); }
+            if (e.target.checked) selected.set(x.id, x.email); else selected.delete(x.id);
+            draw();
+          } }) },
+        { label: 'Subscriber', render: (x) => h('div', {}, h('div', { class: 'cell-main' }, x.email),
+          h('div', { class: 'cell-sub' }, [x.first_name, x.last_name].filter(Boolean).join(' ') || '—')) },
+        { label: 'Status', render: (x) => badge(x.status) },
+        { label: 'Tags', render: (x) => (x.tags.length ? x.tags.map((t) => h('span', { class: 'chip' }, t)) : h('span', { class: 'muted' }, '—')) },
+        { label: 'Engagement', class: 'num', render: (x) => h('span', { title: `${fmtPct(x.engagement_score)} engagement score` }, Math.round(x.engagement_score)) },
+        { label: 'Subscribed', render: (x) => h('span', { class: 'nowrap', title: fmtDate(x.subscribed_at) }, relTime(x.subscribed_at)) },
       ], data.items, {
-        onRowClick: (s) => editDialog(s, load),
-        empty: state.search || state.status || state.tag || state.segment_id
-          ? 'No subscribers match these filters.'
-          : h('div', {}, 'No subscribers yet. Add one or import a CSV.'),
+        onRowClick: (x) => editDialog(x, load),
+        rowClass: (x) => (allMatching || selected.has(x.id) ? 'selected' : ''),
+        empty: filtered ? emptyState('filter', 'No matches', 'No subscribers match these filters.')
+          : emptyState('users', 'No subscribers yet', 'Add people one by one or import a CSV.',
+            h('button', { class: 'primary', onclick: () => importDialog(load) }, icon('upload'), 'Import CSV')),
       }),
-      pager(data, (page) => { state.page = page; load(); }));
+      pager(data, (p) => { state.page = p; load(); }));
+    drawBulk();
+  }
+
+  async function load() {
+    lastData = await api.post('/api/subscribers/query', { ...filterBody(), page: state.page, per_page: 25 });
+    draw();
   }
 
   await load();
+  return () => clear(bulkHost);
 }
 
 function customFieldRows(initial) {
@@ -77,15 +251,6 @@ function customFieldRows(initial) {
     return out;
   };
   return { el: h('div', {}, host, h('button', { type: 'button', class: 'sm', onclick: () => addRow() }, icon('plus'), 'Add field')), collect };
-}
-
-/** "12" -> 12, "true" -> true, otherwise the string. */
-export function parseValue(raw) {
-  const v = raw.trim();
-  if (v === 'true') return true;
-  if (v === 'false') return false;
-  if (v !== '' && !Number.isNaN(Number(v))) return Number(v);
-  return raw;
 }
 
 async function editDialog(subscriber, reload) {

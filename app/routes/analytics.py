@@ -16,13 +16,17 @@ def overview():
 @bp.get('/engagement')
 @require_auth
 def engagement():
-    return jsonify(analytics_service.get_engagement_metrics(request.business_id, request.args.get('days', 30)))
+    a = request.args
+    return jsonify(analytics_service.get_engagement_metrics(request.business_id, a.get('days', 30),
+                                                            a.get('date_from'), a.get('date_to')))
 
 
 @bp.get('/subscribers')
 @require_auth
 def subscriber_growth():
-    return jsonify(analytics_service.get_subscriber_growth(request.business_id, request.args.get('days', 30)))
+    a = request.args
+    return jsonify(analytics_service.get_subscriber_growth(request.business_id, a.get('days', 30),
+                                                           a.get('date_from'), a.get('date_to')))
 
 
 @bp.get('/campaigns')
